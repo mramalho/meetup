@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AWS Community - Processar Vídeo</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body class="light">
+<header class="top-bar">
+  <div class="top-title">AWS Community</div>
+  <div class="top-actions">
+    <button id="refreshBtn" class="btn-secondary">Atualizar listas</button>
+    <button id="darkModeToggle" class="btn-secondary">🌙 Dark</button>
+  </div>
+</header>
+
+<div class="container">
+  <aside class="sidebar">
+    <section class="upload-section">
+      <h3>Enviar Vídeo (.mp4)</h3>
+      <input type="file" id="videoFile" accept=".mp4" />
+      <button id="uploadBtn" class="btn-primary">Enviar</button>
+      <p id="uploadStatus" class="status-text"></p>
+    </section>
+
+    <section>
+      <h3>Arquivos disponíveis</h3>
+      <div class="tabs">
+        <button class="tab active" data-tab="srt">Transcrições (.srt)</button>
+        <button class="tab" data-tab="md">Resumos (.md)</button>
+      </div>
+
+      <div id="srtList" class="file-list"></div>
+      <div id="mdList" class="file-list hidden"></div>
+    </section>
+  </aside>
+
+  <main class="preview-panel">
+    <div class="preview-header">
+      <h2 id="previewTitle">Preview</h2>
+      <button id="downloadBtn" class="btn-secondary" disabled>Baixar arquivo</button>
+    </div>
+    <div id="previewContent" class="preview-content">
+      <p>Selecione um arquivo à esquerda para visualizar o conteúdo aqui.</p>
+    </div>
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/aws-sdk/2.1481.0/aws-sdk.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

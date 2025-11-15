@@ -1,0 +1,255 @@
+:root {
+  --bg-main-light: #f5f5f5;
+  --bg-sidebar-light: #e8ecf1;
+  --bg-card-light: #ffffff;
+  --text-main-light: #222;
+  --accent: #0d47a1;
+
+  --bg-main-dark: #101318;
+  --bg-sidebar-dark: #181d25;
+  --bg-card-dark: #1f2630;
+  --text-main-dark: #f1f1f1;
+}
+
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+}
+
+body.light {
+  background: var(--bg-main-light);
+  color: var(--text-main-light);
+}
+
+body.dark {
+  background: var(--bg-main-dark);
+  color: var(--text-main-dark);
+}
+
+.top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 32px;
+  background: var(--accent);
+  color: #fff;
+}
+
+.top-title {
+  font-size: 1.2rem;
+  font-weight: bold;
+}
+
+.top-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.container {
+  display: flex;
+  height: calc(100vh - 64px);
+}
+
+.sidebar {
+  width: 300px;
+  padding: 32px 24px;
+  border-right: 2px solid #ccc;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+body.light .sidebar {
+  background: var(--bg-sidebar-light);
+}
+
+body.dark .sidebar {
+  background: var(--bg-sidebar-dark);
+  border-color: #333;
+}
+
+.upload-section {
+  margin-bottom: 0;
+}
+
+.upload-section h3 {
+  margin-top: 0;
+  margin-bottom: 16px;
+  font-size: 1.1rem;
+}
+
+.upload-section input[type="file"] {
+  width: 100%;
+  margin-bottom: 16px;
+  padding: 8px;
+  font-size: 0.9rem;
+}
+
+.upload-section #uploadBtn {
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+.status-text {
+  font-size: 0.85rem;
+  margin-top: 12px;
+  min-height: 20px;
+}
+
+.btn-primary,
+.btn-secondary {
+  padding: 10px 18px;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  font-size: 0.95rem;
+  transition: all 0.2s ease;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+}
+
+.btn-primary:hover {
+  filter: brightness(1.05);
+}
+
+.btn-secondary {
+  background: #ffffff;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+body.dark .btn-secondary {
+  background: var(--bg-card-dark);
+  color: #fff;
+}
+
+section h3 {
+  margin-top: 0;
+  margin-bottom: 16px;
+  font-size: 1.1rem;
+}
+
+.tabs {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.tab {
+  flex: 1;
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--accent);
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: all 0.2s ease;
+}
+
+.tab.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  max-height: 60vh;
+  padding-right: 4px;
+}
+
+.file-item {
+  padding: 12px 16px;
+  text-align: center;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  border: 1px solid var(--accent);
+  transition: all 0.2s ease;
+}
+
+body.light .file-item {
+  background: var(--bg-card-light);
+}
+
+body.dark .file-item {
+  background: var(--bg-card-dark);
+}
+
+.file-item:hover {
+  filter: brightness(1.03);
+}
+
+.file-item.selected {
+  box-shadow: 0 0 0 2px #ffb300;
+}
+
+.preview-panel {
+  flex: 1;
+  padding: 32px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0;
+}
+
+.preview-header h2 {
+  margin: 0;
+  font-size: 1.5rem;
+}
+
+.preview-content {
+  flex: 1;
+  border-radius: 12px;
+  padding: 24px 32px;
+  overflow-y: auto;
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+body.light .preview-content {
+  background: var(--bg-card-light);
+  border: 1px solid #ddd;
+}
+
+body.dark .preview-content {
+  background: var(--bg-card-dark);
+  border: 1px solid #444;
+}
+
+.preview-content pre,
+.preview-content code {
+  font-family: "Courier New", monospace;
+  font-size: 0.85rem;
+}
+
+.hidden {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .container {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    width: 100%;
+    border-right: none;
+    border-bottom: 2px solid #ccc;
+  }
+
+  .file-list {
+    max-height: 200px;
+  }
+}
