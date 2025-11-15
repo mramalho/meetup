@@ -48,12 +48,53 @@ def extract_plain_text_from_srt(srt_str: str) -> str:
     return "\n".join(content_lines)
 
 
-def call_bedrock_nova(transcript_text: str) -> str:
+def extract_video_base_name(srt_filename: str) -> str:
     """
-    Chama o Amazon Bedrock para gerar
-    um resumo detalhado em Markdown.
+    Extrai o nome base do vídeo a partir do nome do arquivo .srt.
+    O Transcribe gera arquivos como: meetup-{nome}-{timestamp}.srt
+    Precisamos extrair apenas o {nome} para encontrar o prompt.
     """
-    system_prompt = (
+    # Remove a extensão .srt
+    name_without_ext = srt_filename.rsplit(".", 1)[0]
+    
+    # Remove o prefixo "meetup-" se existir
+    if name_without_ext.startswith("meetup-"):
+        name_without_ext = name_without_ext[7:]  # Remove "meetup-"
+    
+    # Remove o timestamp (últimos números após o último hífen)
+    # Ex: "palla-1763239925" -> "palla"
+    parts = name_without_ext.split("-")
+    # Se a última parte é numérica (timestamp), remove
+    if len(parts) > 1 and parts[-1].isdigit():
+        return "-".join(parts[:-1])
+    
+    return name_without_ext
+
+
+def get_system_prompt(base_name: str, bucket: str) -> str:
+    """
+    Tenta ler o prompt personalizado do S3.
+    Se não encontrar, retorna o prompt padrão.
+    """
+    prompt_key = f"prompts/{base_name}.txt"
+    
+    try:
+        print(f"Tentando ler prompt personalizado de s3://{bucket}/{prompt_key}")
+        response = s3_client.get_object(Bucket=bucket, Key=prompt_key)
+        prompt_text = response["Body"].read().decode("utf-8", errors="ignore")
+        print(f"Prompt personalizado encontrado e carregado ({len(prompt_text)} caracteres)")
+        return prompt_text.strip()
+    except ClientError as e:
+        error_code = e.response.get("Error", {}).get("Code", "")
+        if error_code == "NoSuchKey":
+            print(f"Prompt personalizado não encontrado em {prompt_key}, usando prompt padrão")
+        elif error_code == "AccessDenied":
+            print(f"Sem permissão para ler {prompt_key}, usando prompt padrão")
+        else:
+            print(f"Erro ao ler prompt personalizado: {e}, usando prompt padrão")
+    
+    # Prompt padrão
+    return (
         "Você é um assistente especializado em resumir conteúdos de palestras, "
         "aulas e vídeos técnicos. Gere um resumo detalhado em português, em formato "
         "Markdown, com seções, tópicos e, se fizer sentido, bullets e subtítulos.\n\n"
@@ -63,6 +104,12 @@ def call_bedrock_nova(transcript_text: str) -> str:
         "- Se houver passos práticos, destaque-os em listas numeradas."
     )
 
+
+def call_bedrock_nova(transcript_text: str, system_prompt: str) -> str:
+    """
+    Chama o Amazon Bedrock para gerar
+    um resumo detalhado em Markdown.
+    """
     user_message = (
         "Abaixo está a transcrição (já limpa) de um vídeo. "
         "Gere um resumo detalhado em Markdown, conforme as regras.\n\n"
@@ -140,11 +187,18 @@ def lambda_handler(event, context):
         print("Transcrição vazia após limpeza. Nada a fazer.")
         return {"status": "empty_transcript"}
 
-    summary_md = call_bedrock_nova(plain_text)
-
-    # Mesma base do nome do arquivo .srt
-    base_name = key.split("/")[-1].rsplit(".", 1)[0]
-    output_key = f"{OUTPUT_PREFIX}{base_name}.md"
+    # Obtém o prompt (personalizado ou padrão)
+    # Extrai o nome base do arquivo .srt (removendo prefixo e timestamp)
+    srt_filename = key.split("/")[-1]
+    video_base_name = extract_video_base_name(srt_filename)
+    print(f"Nome base do vídeo extraído: {video_base_name} (de {srt_filename})")
+    system_prompt = get_system_prompt(video_base_name, bucket)
+    
+    summary_md = call_bedrock_nova(plain_text, system_prompt)
+    
+    # Mesma base do nome do arquivo .srt (usa o nome completo do .srt para o output)
+    srt_base_name = key.split("/")[-1].rsplit(".", 1)[0]
+    output_key = f"{OUTPUT_PREFIX}{srt_base_name}.md"
 
     print(f"Gravando resumo em s3://{OUTPUT_BUCKET}/{output_key}")
 

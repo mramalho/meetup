@@ -8,19 +8,26 @@
 </head>
 <body class="light">
 <header class="top-bar">
-  <div class="top-title">AWS Community</div>
-  <div class="top-actions">
-    <button id="refreshBtn" class="btn-secondary">Atualizar listas</button>
-    <button id="darkModeToggle" class="btn-secondary">🌙 Dark</button>
-  </div>
+  <img src="assets/logo.svg" alt="AWS Community Campinas" class="logo" />
 </header>
 
 <div class="container">
   <aside class="sidebar">
     <section class="upload-section">
-      <h3>Enviar Vídeo (.mp4)</h3>
+      <div class="section-header">
+        <h3>Enviar Vídeo (.mp4)</h3>
+        <div class="header-actions">
+          <button id="refreshBtn" class="btn-icon" title="Atualizar">🔄</button>
+          <button id="darkModeToggle" class="btn-icon" title="Alternar tema">🌙</button>
+        </div>
+      </div>
       <input type="file" id="videoFile" accept=".mp4" />
-      <button id="uploadBtn" class="btn-primary">Enviar</button>
+      
+      <h3 class="prompt-title">Prompt Personalizado (opcional)</h3>
+      <input type="file" id="promptFile" accept=".txt,.md" />
+      <p class="prompt-help-text">Se não enviar, será usado o prompt padrão</p>
+      
+      <button id="uploadBtn" class="btn-primary">📤 Enviar</button>
       <p id="uploadStatus" class="status-text"></p>
     </section>
 
@@ -39,7 +46,7 @@
   <main class="preview-panel">
     <div class="preview-header">
       <h2 id="previewTitle">Preview</h2>
-      <button id="downloadBtn" class="btn-secondary" disabled>Baixar arquivo</button>
+      <button id="downloadBtn" class="btn-secondary" disabled>⬇️ Baixar</button>
     </div>
     <div id="previewContent" class="preview-content">
       <p>Selecione um arquivo à esquerda para visualizar o conteúdo aqui.</p>
@@ -48,7 +55,11 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/aws-sdk/2.1481.0/aws-sdk.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.8/purify.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.6.1/dist/mermaid.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" />
 <script src="app.js"></script>
 </body>
 </html>

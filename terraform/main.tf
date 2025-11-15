@@ -123,7 +123,8 @@ resource "aws_iam_role_policy" "cognito_unauth_s3_policy" {
             "s3:prefix" = [
               "video/*",
               "transcribe/*",
-              "resumo/*"
+              "resumo/*",
+              "prompts/*"
             ]
           }
         }
@@ -138,7 +139,8 @@ resource "aws_iam_role_policy" "cognito_unauth_s3_policy" {
         Resource = [
           "arn:aws:s3:::${var.cps_bucket_name}/video/*",
           "arn:aws:s3:::${var.cps_bucket_name}/transcribe/*",
-          "arn:aws:s3:::${var.cps_bucket_name}/resumo/*"
+          "arn:aws:s3:::${var.cps_bucket_name}/resumo/*",
+          "arn:aws:s3:::${var.cps_bucket_name}/prompts/*"
         ]
       }
     ]
@@ -258,7 +260,10 @@ resource "aws_iam_role_policy" "lambda_bedrock_summary_policy" {
       {
         Effect   = "Allow",
         Action   = ["s3:GetObject"],
-        Resource = "arn:aws:s3:::${var.cps_bucket_name}/transcribe/*"
+        Resource = [
+          "arn:aws:s3:::${var.cps_bucket_name}/transcribe/*",
+          "arn:aws:s3:::${var.cps_bucket_name}/prompts/*"
+        ]
       },
       {
         Effect   = "Allow",

@@ -20,9 +20,10 @@ Sistema completo para processamento automatizado de vídeos que gera transcriç�
 Este projeto automatiza o processamento completo de vídeos educacionais e palestras:
 
 1. **Upload de Vídeos**: Interface web para upload de arquivos `.mp4`
-2. **Transcrição Automática**: Geração de legendas `.srt` via Amazon Transcribe
-3. **Resumo Inteligente**: Geração de resumos em Markdown via Amazon Bedrock (DeepSeek R1)
-4. **Interface Web**: Visualização e download de transcrições e resumos
+2. **Prompt Personalizado**: Opção de enviar prompt customizado para personalizar os resumos
+3. **Transcrição Automática**: Geração de legendas `.srt` via Amazon Transcribe
+4. **Resumo Inteligente**: Geração de resumos em Markdown via Amazon Bedrock (DeepSeek R1)
+5. **Interface Web Moderna**: Visualização avançada de Markdown com suporte a tabelas, diagramas Mermaid e syntax highlighting
 
 ## 🏗️ Arquitetura
 
@@ -91,8 +92,9 @@ sequenceDiagram
     participant BR as Amazon Bedrock
     participant S3R as S3 resumo/
 
-    U->>W: 1. Faz upload do vídeo .mp4
-    W->>S3V: 2. Upload para s3://bucket/video/
+    U->>W: 1. Faz upload do vídeo .mp4 (e opcionalmente prompt)
+    W->>S3V: 2. Upload vídeo para s3://bucket/video/
+    W->>S3V: 2b. Upload prompt para s3://bucket/prompts/ (se fornecido)
     S3V->>EB1: 3. Dispara evento Object Created
     EB1->>LT: 4. Invoca Lambda
     LT->>TR: 5. Inicia TranscriptionJob
@@ -100,8 +102,9 @@ sequenceDiagram
     S3T->>EB2: 7. Dispara evento Object Created
     EB2->>LB: 8. Invoca Lambda
     LB->>S3T: 9. Lê arquivo .srt
-    LB->>LB: 10. Extrai texto puro
-    LB->>BR: 11. Chama Bedrock Converse API
+    LB->>S3V: 9b. Tenta ler prompt personalizado (se existir)
+    LB->>LB: 10. Extrai texto puro do .srt
+    LB->>BR: 11. Chama Bedrock Converse API (com prompt personalizado ou padrão)
     BR->>LB: 12. Retorna resumo em Markdown
     LB->>S3R: 13. Salva arquivo .md
     U->>W: 14. Atualiza lista de arquivos
@@ -116,13 +119,27 @@ sequenceDiagram
 
 - **Localização**: `app/`
 - **Tecnologias**: HTML5, CSS3, JavaScript (Vanilla)
+- **Bibliotecas Externas**:
+  - **Marked.js**: Renderização de Markdown
+  - **Highlight.js**: Syntax highlighting para blocos de código
+  - **DOMPurify**: Sanitização de HTML para segurança
+  - **Mermaid.js**: Renderização de diagramas Mermaid
 - **Hospedagem**: S3 + CloudFront
+- **Layout**: Sidebar vertical à esquerda com preview à direita
+- **Design**: Paleta monocromática (preto/cinza/branco)
 - **Funcionalidades**:
   - Upload de vídeos `.mp4` via Cognito Identity Pool
+  - Upload de prompt personalizado (`.txt` ou `.md`) - opcional
   - Listagem de transcrições `.srt` e resumos `.md`
-  - Visualização de conteúdo (preview)
+  - Visualização avançada de Markdown com:
+    - Suporte a GitHub Flavored Markdown (tabelas, task lists)
+    - Diagramas Mermaid (flowcharts, sequence, gantt, etc.)
+    - Syntax highlighting para código
+    - Renderização de tabelas responsivas
   - Download de arquivos
   - Modo claro/escuro
+  - Botões de ação integrados (Atualizar, Dark Mode)
+  - Logo AWS Community Campinas no header
 
 ### Backend (Serverless)
 
@@ -135,6 +152,8 @@ sequenceDiagram
 - **Trigger**: EventBridge (quando arquivo `.srt` é criado em `transcribe/`)
 - **Função**: 
   - Extrai texto puro do arquivo `.srt`
+  - Tenta ler prompt personalizado do S3 (`prompts/{nome_video}.txt`)
+  - Se não encontrar, usa prompt padrão hardcoded
   - Chama Amazon Bedrock (DeepSeek R1) para gerar resumo
   - Salva resumo em Markdown em `resumo/`
 
@@ -142,7 +161,11 @@ sequenceDiagram
 
 - **S3 Buckets**:
   - `aws-community-app`: Frontend estático
-  - `aws-community-cps`: Vídeos, transcrições e resumos
+  - `aws-community-cps`: Vídeos, transcrições, resumos e prompts personalizados
+    - `video/`: Arquivos de vídeo `.mp4`
+    - `transcribe/`: Transcrições `.srt`
+    - `resumo/`: Resumos `.md`
+    - `prompts/`: Prompts personalizados `.txt` (opcional)
 - **CloudFront**: CDN para distribuição do frontend
 - **Route53**: DNS para domínio personalizado
 - **ACM**: Certificado SSL/TLS
@@ -185,7 +208,9 @@ meetup/
 │   ├── index.html               # Página principal
 │   ├── app.js                   # Lógica JavaScript
 │   ├── styles.css               # Estilos CSS
-│   └── error.html               # Página de erro 404
+│   ├── error.html               # Página de erro 404
+│   └── assets/                  # Assets estáticos
+│       └── logo.svg             # Logo AWS Community Campinas
 │
 ├── terraform/                    # Infraestrutura como código
 │   ├── main.tf                  # Recursos principais
@@ -296,8 +321,11 @@ Após o deploy, acesse o site através do domínio configurado (ex: `https://mee
 ### Upload de Vídeo
 
 1. Clique em "Choose File" e selecione um arquivo `.mp4`
-2. Clique em "Enviar"
-3. Aguarde a confirmação de upload
+2. (Opcional) Selecione um arquivo de prompt personalizado (`.txt` ou `.md`)
+   - O prompt será usado para personalizar o resumo gerado
+   - Se não enviar, será usado o prompt padrão
+3. Clique em "Enviar"
+4. Aguarde a confirmação de upload
 
 ### Processamento Automático
 
@@ -309,14 +337,32 @@ O processamento acontece automaticamente:
 
 2. **Resumo** (alguns minutos após a transcrição):
    - O texto é extraído do `.srt`
-   - Resumo é gerado pelo Amazon Bedrock
+   - Se um prompt personalizado foi enviado, ele é lido do S3 (`prompts/{nome_video}.txt`)
+   - Caso contrário, é usado o prompt padrão
+   - Resumo é gerado pelo Amazon Bedrock usando o prompt selecionado
    - Arquivo `.md` é salvo em `resumo/`
+
+### Prompt Personalizado
+
+Você pode personalizar os resumos enviando um arquivo de prompt junto com o vídeo:
+
+- **Formato**: Arquivo de texto (`.txt` ou `.md`)
+- **Nome**: O arquivo será salvo como `{nome_do_video}.txt` no bucket
+- **Uso**: O prompt será usado como instrução para o modelo de IA ao gerar o resumo
+- **Exemplo**: Um prompt pode instruir o modelo a focar em pontos técnicos, criar seções específicas, ou usar um formato particular
+
+**Nota**: Se nenhum prompt for enviado, o sistema usa um prompt padrão otimizado para resumos de palestras e vídeos técnicos.
 
 ### Visualização
 
 1. Use as abas "Transcrições (.srt)" e "Resumos (.md)" para alternar entre os tipos
 2. Clique em um arquivo para visualizar o conteúdo
-3. Use o botão "Baixar arquivo" para fazer download
+3. Os resumos Markdown suportam:
+   - **Tabelas**: Renderização completa de tabelas GitHub Flavored Markdown
+   - **Diagramas Mermaid**: Flowcharts, sequence diagrams, Gantt charts, etc.
+   - **Syntax Highlighting**: Código com destaque de sintaxe
+   - **Task Lists**: Listas de tarefas interativas
+4. Use o botão "Baixar arquivo" para fazer download
 
 ## 🛠️ Scripts Disponíveis
 
@@ -359,7 +405,8 @@ bash script/clear_files.sh
 ### Atualizar Frontend
 
 1. Edite os arquivos em `app/`
-2. Execute `bash script/deploy_app.sh`
+2. Se adicionar novos assets, certifique-se de que estão na pasta `app/assets/`
+3. Execute `bash script/deploy_app.sh`
 
 ### Verificar Logs
 
@@ -409,6 +456,7 @@ Os custos variam conforme o uso, mas os principais componentes são:
 - Verifique os logs da Lambda `generate-summary-from-srt-bedrock`
 - Verifique se o acesso ao Bedrock está habilitado
 - Verifique se o inference profile está correto
+- Verifique se o prompt personalizado (se usado) está no formato correto e no bucket correto
 
 ### Site não carrega
 
@@ -435,3 +483,5 @@ Contribuições são bem-vindas! Sinta-se à vontade para abrir issues ou pull r
 ---
 
 **Desenvolvido com ❤️ usando AWS Serverless**
+
+

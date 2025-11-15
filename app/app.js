@@ -7,8 +7,31 @@ AWS.config.update({
 
 const s3 = new AWS.S3();
 
+// Inicializar Mermaid
+if (typeof mermaid !== 'undefined') {
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'default',
+    securityLevel: 'loose',
+    flowchart: {
+      useMaxWidth: true,
+      htmlLabels: true,
+      curve: 'basis'
+    },
+    themeVariables: {
+      primaryColor: '#333333',
+      primaryTextColor: '#fff',
+      primaryBorderColor: '#1a1a1a',
+      lineColor: '#666666',
+      secondaryColor: '#e5e5e5',
+      tertiaryColor: '#f5f5f5'
+    }
+  });
+}
+
 const videoBucket = "aws-community-cps";
 const videoPrefix = "video/";
+const promptPrefix = "prompts/";
 const srtPrefix   = "transcribe/";
 const mdPrefix    = "resumo/";
 
@@ -31,7 +54,8 @@ darkModeToggle.addEventListener("click", () => {
   const dark = body.classList.contains("dark");
   body.classList.toggle("dark", !dark);
   body.classList.toggle("light", dark);
-  darkModeToggle.textContent = dark ? "🌙 Dark" : "☀️ Light";
+  // Se estava dark, agora está light (mostra 🌙), se estava light, agora está dark (mostra ☀️)
+  darkModeToggle.textContent = !dark ? "☀️" : "🌙";
 });
 
 // Tabs (srt/md)
@@ -54,36 +78,72 @@ tabs.forEach(tab => {
 // Upload vídeo
 uploadBtn.addEventListener("click", async () => {
   const fileInput = document.getElementById("videoFile");
-  const file = fileInput.files[0];
+  const promptInput = document.getElementById("promptFile");
+  const videoFile = fileInput.files[0];
+  const promptFile = promptInput.files[0];
 
-  if (!file) {
+  if (!videoFile) {
     alert("Selecione um arquivo .mp4 primeiro!");
     return;
   }
 
-  if (!file.name.toLowerCase().endsWith(".mp4")) {
+  if (!videoFile.name.toLowerCase().endsWith(".mp4")) {
     alert("O arquivo precisa ser .mp4");
     return;
   }
 
-  const params = {
-    Bucket: videoBucket,
-    Key: videoPrefix + file.name,
-    Body: file,
-    ContentType: "video/mp4"
-  };
+  // Validar arquivo de prompt se fornecido
+  if (promptFile) {
+    const validExtensions = [".txt", ".md"];
+    const fileName = promptFile.name.toLowerCase();
+    const hasValidExtension = validExtensions.some(ext => fileName.endsWith(ext));
+    
+    if (!hasValidExtension) {
+      alert("O arquivo de prompt precisa ser .txt ou .md");
+      return;
+    }
+  }
 
-  uploadStatus.innerText = "Enviando vídeo...";
+  uploadStatus.innerText = "⏳ Enviando vídeo...";
   uploadStatus.style.color = "";
+  uploadStatus.className = "status-text";
 
   try {
     // Garantir que as credenciais estão carregadas
     await AWS.config.credentials.getPromise();
     
-    await s3.upload(params).promise();
-    uploadStatus.innerText = "✅ Upload concluído! A transcrição será gerada em alguns minutos.";
+    // Upload do vídeo
+    const videoParams = {
+      Bucket: videoBucket,
+      Key: videoPrefix + videoFile.name,
+      Body: videoFile,
+      ContentType: "video/mp4"
+    };
+    
+    await s3.upload(videoParams).promise();
+    
+    // Upload do prompt se fornecido
+    if (promptFile) {
+      const baseName = videoFile.name.split(".").slice(0, -1).join(".");
+      const promptKey = promptPrefix + baseName + ".txt";
+      
+      const promptParams = {
+        Bucket: videoBucket,
+        Key: promptKey,
+        Body: promptFile,
+        ContentType: "text/plain"
+      };
+      
+      await s3.upload(promptParams).promise();
+      uploadStatus.innerText = "✅ Upload concluído! Vídeo e prompt enviados. A transcrição será gerada em alguns minutos.";
+    } else {
+      uploadStatus.innerText = "✅ Upload concluído! A transcrição será gerada em alguns minutos.";
+    }
+    
     uploadStatus.style.color = "green";
+    uploadStatus.className = "status-text status-success";
     fileInput.value = "";
+    promptInput.value = "";
   } catch (err) {
     console.error("Erro no upload:", err);
     let errorMsg = "❌ Erro no upload.";
@@ -100,6 +160,7 @@ uploadBtn.addEventListener("click", async () => {
     
     uploadStatus.innerText = errorMsg;
     uploadStatus.style.color = "red";
+    uploadStatus.className = "status-text status-error";
   }
 });
 
@@ -167,10 +228,135 @@ async function loadFilePreview(key, type) {
     const text = new TextDecoder("utf-8").decode(data.Body);
 
     if (type === "md") {
-      const html = marked.parse(text);
-      previewContent.innerHTML = html;
+      // Processar blocos Mermaid antes do Markdown
+      let processedText = text;
+      const mermaidBlocks = [];
+      // Regex melhorado para capturar blocos Mermaid (com ou sem quebra de linha após mermaid)
+      const mermaidRegex = /```mermaid\s*\n?([\s\S]*?)```/g;
+      let match;
+      let mermaidIndex = 0;
+      
+      // Extrair blocos Mermaid e substituir por placeholders
+      while ((match = mermaidRegex.exec(text)) !== null) {
+        const mermaidCode = match[1].trim();
+        const placeholder = `\n\nMERMAID_PLACEHOLDER_${mermaidIndex}\n\n`;
+        mermaidBlocks.push(mermaidCode);
+        processedText = processedText.replace(match[0], placeholder);
+        mermaidIndex++;
+      }
+      
+      // Configurar marked com opções melhoradas para GFM
+      if (typeof marked.setOptions === 'function') {
+        marked.setOptions({
+          breaks: true,
+          gfm: true,
+          headerIds: true,
+          mangle: false,
+          pedantic: false,
+          sanitize: false
+        });
+      }
+
+      // Renderizar Markdown
+      let html = marked.parse(processedText);
+      
+      // Substituir placeholders por divs Mermaid (sem escape para o Mermaid processar)
+      mermaidBlocks.forEach((mermaidCode, index) => {
+        const placeholder = `MERMAID_PLACEHOLDER_${index}`;
+        const mermaidId = `mermaid-${Date.now()}-${index}`;
+        // Criar div Mermaid com o código (sem escape HTML para o Mermaid processar)
+        const mermaidDiv = `<div class="mermaid" id="${mermaidId}">${mermaidCode}</div>`;
+        html = html.replace(new RegExp(placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), mermaidDiv);
+      });
+      
+      // Sanitizar HTML para segurança (permitindo divs com classe mermaid e SVGs)
+      const cleanHtml = DOMPurify.sanitize(html, {
+        ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'u', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 
+                       'ul', 'ol', 'li', 'blockquote', 'code', 'pre', 'a', 'img', 'table', 
+                       'thead', 'tbody', 'tr', 'th', 'td', 'hr', 'del', 'ins', 'mark', 'div',
+                       'input', 'label', 'svg', 'g', 'path', 'circle', 'rect', 'line', 'text',
+                       'polygon', 'polyline', 'ellipse', 'defs', 'style', 'title'],
+        ALLOWED_ATTR: ['href', 'title', 'alt', 'src', 'class', 'id', 'type', 'checked', 'for',
+                       'd', 'x', 'y', 'width', 'height', 'cx', 'cy', 'r', 'fill', 'stroke',
+                       'stroke-width', 'transform', 'viewBox', 'xmlns', 'points', 'x1', 'y1',
+                       'x2', 'y2', 'rx', 'ry', 'style'],
+        ALLOW_DATA_ATTR: false,
+        KEEP_CONTENT: true
+      });
+      
+      previewContent.innerHTML = cleanHtml;
+      
+      // Renderizar diagramas Mermaid
+      if (typeof mermaid !== 'undefined' && mermaidBlocks.length > 0) {
+        // Aguardar um pouco para garantir que o DOM está pronto
+        setTimeout(async () => {
+          const mermaidElements = previewContent.querySelectorAll('.mermaid');
+          
+          for (let index = 0; index < mermaidElements.length; index++) {
+            const element = mermaidElements[index];
+            try {
+              const mermaidCode = element.textContent.trim();
+              const id = element.id || `mermaid-${Date.now()}-${index}`;
+              element.id = id;
+              
+              // Tentar usar a API moderna (async) primeiro
+              if (typeof mermaid.renderAsync === 'function') {
+                try {
+                  const { svg } = await mermaid.renderAsync(id, mermaidCode);
+                  element.innerHTML = svg;
+                } catch (err) {
+                  console.error('Erro ao renderizar Mermaid (async):', err);
+                  throw err;
+                }
+              } else if (typeof mermaid.render === 'function') {
+                // API com callback
+                await new Promise((resolve, reject) => {
+                  mermaid.render(id, mermaidCode, (svgCode, bindFunctions) => {
+                    if (svgCode) {
+                      element.innerHTML = svgCode;
+                      if (bindFunctions) {
+                        bindFunctions(element);
+                      }
+                      resolve();
+                    } else {
+                      reject(new Error('Mermaid retornou SVG vazio'));
+                    }
+                  });
+                });
+              } else if (typeof mermaid.contentLoaded === 'function') {
+                // Usar contentLoaded para processar automaticamente
+                mermaid.contentLoaded();
+              } else {
+                // Fallback: apenas exibir o código
+                element.innerHTML = `<pre><code>${escapeHtml(mermaidCode)}</code></pre>`;
+              }
+            } catch (err) {
+              console.error('Erro ao renderizar Mermaid:', err);
+              const mermaidCode = mermaidBlocks[index] || element.textContent;
+              element.innerHTML = `<div style="padding: 16px; background: rgba(239, 68, 68, 0.1); border-left: 4px solid var(--error); border-radius: 8px; margin: 16px 0;">
+                <p style="color: var(--error); margin: 0 0 8px 0; font-weight: 600;">⚠️ Erro ao renderizar diagrama Mermaid</p>
+                <p style="color: var(--text-secondary-light); margin: 0 0 12px 0; font-size: 0.9rem;">Verifique a sintaxe do diagrama.</p>
+                <pre style="margin: 0; background: rgba(0,0,0,0.05); padding: 12px; border-radius: 6px;"><code>${escapeHtml(mermaidCode)}</code></pre>
+              </div>`;
+            }
+          }
+        }, 100);
+      }
+      
+      // Aplicar syntax highlighting em blocos de código (exceto Mermaid)
+      previewContent.querySelectorAll('pre code:not(.mermaid code)').forEach((block) => {
+        // Não destacar se for um bloco Mermaid
+        if (!block.textContent.includes('MERMAID_PLACEHOLDER')) {
+          hljs.highlightElement(block);
+        }
+      });
     } else {
-      previewContent.innerHTML = `<pre>${escapeHtml(text)}</pre>`;
+      previewContent.innerHTML = `<pre class="hljs"><code>${escapeHtml(text)}</code></pre>`;
+      // Aplicar syntax highlighting mesmo para arquivos .srt
+      const codeBlock = previewContent.querySelector('code');
+      if (codeBlock) {
+        hljs.highlightElement(codeBlock);
+      }
     }
   } catch (err) {
     console.error(err);
