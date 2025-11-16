@@ -12,3 +12,13 @@ output "identity_pool_id" {
   description = "ID do Cognito Identity Pool (para usar no app.js)"
   value       = aws_cognito_identity_pool.public_identity.id
 }
+
+output "cps_bucket_name" {
+  description = "Nome do bucket CPS (para usar no app.js)"
+  value       = aws_s3_bucket.cps.bucket
+}
+
+output "app_bucket_name" {
+  description = "Nome do bucket do app"
+  value       = aws_s3_bucket.app.bucket
+}

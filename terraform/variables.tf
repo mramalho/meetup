@@ -11,7 +11,7 @@ variable "app_bucket_name" {
 }
 
 variable "cps_bucket_name" {
-  description = "Bucket S3 já existente com vídeos/transcrições/resumos"
+  description = "Bucket S3 para vídeos/transcrições/resumos"
   type        = string
   default     = "aws-community-cps"
 }
@@ -41,11 +41,13 @@ variable "bedrock_region" {
 variable "bedrock_model_id" {
   description = "ID do modelo do Bedrock"
   type        = string
-  default     = "deepseek.r1-v1:0"
+  # default     = "deepseek.r1-v1:0"
+  # default = "amazon.nova-lite-v1:0"
+  default     = "anthropic.claude-haiku-4-5-20251001-v1:0"
 }
 
 variable "bedrock_inference_profile" {
-  description = "ID do inference profile do Bedrock (necessário para alguns modelos como deepseek.r1-v1:0). Use 'us.deepseek.r1-v1:0' para DeepSeek R1."
+  description = "ID do inference profile do Bedrock (necessário para alguns modelos como deepseek.r1-v1:0). Use 'us.deepseek.r1-v1:0' para DeepSeek R1. Deixe vazio ('') para modelos que não requerem inference profile."
   type        = string
-  default     = "us.deepseek.r1-v1:0"
+  default     = ""
 }

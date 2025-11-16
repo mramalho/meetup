@@ -14,7 +14,9 @@ OUTPUT_BUCKET = os.environ.get("SUMMARY_OUTPUT_BUCKET", "aws-community-cps")
 OUTPUT_PREFIX = os.environ.get("SUMMARY_OUTPUT_PREFIX", "resumo/")
 MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "amazon.nova-lite-v1:0")
 # Para modelos que requerem inference profile (como deepseek.r1-v1:0), use o profile ID
-INFERENCE_PROFILE = os.environ.get("BEDROCK_INFERENCE_PROFILE", None)
+# Trata string vazia como None (quando não há inference profile necessário)
+inference_profile_raw = os.environ.get("BEDROCK_INFERENCE_PROFILE", None)
+INFERENCE_PROFILE = inference_profile_raw if inference_profile_raw and inference_profile_raw.strip() else None
 
 
 def extract_plain_text_from_srt(srt_str: str) -> str:
@@ -105,7 +107,42 @@ def get_system_prompt(base_name: str, bucket: str) -> str:
     )
 
 
-def call_bedrock_nova(transcript_text: str, system_prompt: str) -> str:
+def get_selected_model(base_name: str, bucket: str) -> str:
+    """
+    Tenta ler o modelo selecionado do S3.
+    Se não encontrar, retorna o modelo padrão da variável de ambiente.
+    """
+    model_key = f"models/{base_name}.txt"
+    
+    try:
+        print(f"Tentando ler modelo selecionado de s3://{bucket}/{model_key}")
+        response = s3_client.get_object(Bucket=bucket, Key=model_key)
+        model_id = response["Body"].read().decode("utf-8", errors="ignore").strip()
+        print(f"Modelo selecionado encontrado: {model_id}")
+        return model_id
+    except ClientError as e:
+        error_code = e.response.get("Error", {}).get("Code", "")
+        if error_code == "NoSuchKey":
+            print(f"Modelo selecionado não encontrado em {model_key}, usando modelo padrão: {MODEL_ID}")
+        elif error_code == "AccessDenied":
+            print(f"Sem permissão para ler {model_key}, usando modelo padrão: {MODEL_ID}")
+        else:
+            print(f"Erro ao ler modelo selecionado: {e}, usando modelo padrão: {MODEL_ID}")
+    
+    return MODEL_ID
+
+
+def get_inference_profile_for_model(model_id: str):
+    """
+    Retorna o inference profile apropriado para o modelo.
+    DeepSeek R1 requer inference profile, outros modelos não.
+    """
+    if model_id == "deepseek.r1-v1:0":
+        return "us.deepseek.r1-v1:0"
+    return None
+
+
+def call_bedrock_nova(transcript_text: str, system_prompt: str, model_id: str, inference_profile: str = None) -> str:
     """
     Chama o Amazon Bedrock para gerar
     um resumo detalhado em Markdown.
@@ -121,7 +158,10 @@ def call_bedrock_nova(transcript_text: str, system_prompt: str) -> str:
     try:
         # Se houver inference profile configurado, use-o como modelId
         # A API converse aceita inference profile ID como modelId
-        model_id_to_use = INFERENCE_PROFILE if INFERENCE_PROFILE else MODEL_ID
+        # Caso contrário, use o model_id diretamente
+        model_id_to_use = inference_profile if inference_profile else model_id
+        
+        print(f"Usando modelo: {model_id_to_use} (model_id={model_id}, inference_profile={inference_profile})")
         
         response = bedrock_client.converse(
             modelId=model_id_to_use,
@@ -194,7 +234,11 @@ def lambda_handler(event, context):
     print(f"Nome base do vídeo extraído: {video_base_name} (de {srt_filename})")
     system_prompt = get_system_prompt(video_base_name, bucket)
     
-    summary_md = call_bedrock_nova(plain_text, system_prompt)
+    # Obtém o modelo selecionado (ou usa o padrão)
+    selected_model_id = get_selected_model(video_base_name, bucket)
+    selected_inference_profile = get_inference_profile_for_model(selected_model_id)
+    
+    summary_md = call_bedrock_nova(plain_text, system_prompt, selected_model_id, selected_inference_profile)
     
     # Mesma base do nome do arquivo .srt (usa o nome completo do .srt para o output)
     srt_base_name = key.split("/")[-1].rsplit(".", 1)[0]

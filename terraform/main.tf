@@ -20,8 +20,11 @@ provider "aws" {
 resource "aws_s3_bucket" "app" {
   bucket = var.app_bucket_name
 
+  # Permite deletar o bucket mesmo com objetos (útil para terraform destroy)
+  force_destroy = true
+
   tags = {
-    Name = "aws-community-app"
+    Name = var.app_bucket_name
   }
 }
 
@@ -38,18 +41,18 @@ resource "aws_s3_bucket_website_configuration" "app_website" {
 }
 
 resource "aws_s3_bucket_policy" "app_policy" {
-  bucket = aws_s3_bucket.app.id
+  bucket     = aws_s3_bucket.app.id
   depends_on = [aws_s3_bucket_public_access_block.app_public_access]
 
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [
       {
-        Sid      = "PublicReadForWebsite",
-        Effect   = "Allow",
+        Sid       = "PublicReadForWebsite",
+        Effect    = "Allow",
         Principal = "*",
-        Action   = ["s3:GetObject"],
-        Resource = "arn:aws:s3:::${var.app_bucket_name}/*"
+        Action    = ["s3:GetObject"],
+        Resource  = "${aws_s3_bucket.app.arn}/*"
       }
     ]
   })
@@ -57,11 +60,22 @@ resource "aws_s3_bucket_policy" "app_policy" {
 
 
 ########################
-# S3 CORS - BUCKET CPS
+# S3 - BUCKET CPS (Vídeos/Transcrições/Resumos)
 ########################
 
-resource "aws_s3_bucket_cors_configuration" "cps_cors" {
+resource "aws_s3_bucket" "cps" {
   bucket = var.cps_bucket_name
+
+  # Permite deletar o bucket mesmo com objetos (útil para terraform destroy)
+  force_destroy = true
+
+  tags = {
+    Name = var.cps_bucket_name
+  }
+}
+
+resource "aws_s3_bucket_cors_configuration" "cps_cors" {
+  bucket = aws_s3_bucket.cps.id
 
   cors_rule {
     allowed_headers = ["*"]
@@ -117,14 +131,15 @@ resource "aws_iam_role_policy" "cognito_unauth_s3_policy" {
       {
         Effect   = "Allow",
         Action   = ["s3:ListBucket"],
-        Resource = "arn:aws:s3:::${var.cps_bucket_name}",
+        Resource = aws_s3_bucket.cps.arn,
         Condition = {
           StringLike = {
             "s3:prefix" = [
               "video/*",
               "transcribe/*",
               "resumo/*",
-              "prompts/*"
+              "prompts/*",
+              "models/*"
             ]
           }
         }
@@ -137,10 +152,11 @@ resource "aws_iam_role_policy" "cognito_unauth_s3_policy" {
           "s3:GetObject"
         ],
         Resource = [
-          "arn:aws:s3:::${var.cps_bucket_name}/video/*",
-          "arn:aws:s3:::${var.cps_bucket_name}/transcribe/*",
-          "arn:aws:s3:::${var.cps_bucket_name}/resumo/*",
-          "arn:aws:s3:::${var.cps_bucket_name}/prompts/*"
+          "${aws_s3_bucket.cps.arn}/video/*",
+          "${aws_s3_bucket.cps.arn}/transcribe/*",
+          "${aws_s3_bucket.cps.arn}/resumo/*",
+          "${aws_s3_bucket.cps.arn}/prompts/*",
+          "${aws_s3_bucket.cps.arn}/models/*"
         ]
       }
     ]
@@ -193,13 +209,13 @@ resource "aws_iam_role_policy" "lambda_transcribe_policy" {
       {
         Effect   = "Allow",
         Action   = ["s3:GetObject"],
-        Resource = "arn:aws:s3:::${var.cps_bucket_name}/video/*"
+        Resource = "${aws_s3_bucket.cps.arn}/video/*"
       },
       # opcional, se a Lambda precisar escrever algo
       {
         Effect   = "Allow",
         Action   = ["s3:PutObject"],
-        Resource = "arn:aws:s3:::${var.cps_bucket_name}/transcribe/*"
+        Resource = "${aws_s3_bucket.cps.arn}/transcribe/*"
       },
       {
         Effect = "Allow",
@@ -227,7 +243,7 @@ resource "aws_lambda_function" "start_transcribe" {
 
   environment {
     variables = {
-      TRANSCRIBE_OUTPUT_BUCKET = var.cps_bucket_name
+      TRANSCRIBE_OUTPUT_BUCKET = aws_s3_bucket.cps.bucket
       TRANSCRIBE_OUTPUT_PREFIX = "transcribe/"
       TRANSCRIBE_LANGUAGE_CODE = "pt-BR"
     }
@@ -258,17 +274,18 @@ resource "aws_iam_role_policy" "lambda_bedrock_summary_policy" {
     Version = "2012-10-17",
     Statement = [
       {
-        Effect   = "Allow",
-        Action   = ["s3:GetObject"],
+        Effect = "Allow",
+        Action = ["s3:GetObject"],
         Resource = [
-          "arn:aws:s3:::${var.cps_bucket_name}/transcribe/*",
-          "arn:aws:s3:::${var.cps_bucket_name}/prompts/*"
+          "${aws_s3_bucket.cps.arn}/transcribe/*",
+          "${aws_s3_bucket.cps.arn}/prompts/*",
+          "${aws_s3_bucket.cps.arn}/models/*"
         ]
       },
       {
         Effect   = "Allow",
         Action   = ["s3:PutObject"],
-        Resource = "arn:aws:s3:::${var.cps_bucket_name}/resumo/*"
+        Resource = "${aws_s3_bucket.cps.arn}/resumo/*"
       },
       {
         Effect = "Allow",
@@ -306,7 +323,7 @@ resource "aws_lambda_function" "bedrock_summary" {
 
   environment {
     variables = {
-      SUMMARY_OUTPUT_BUCKET     = var.cps_bucket_name
+      SUMMARY_OUTPUT_BUCKET     = aws_s3_bucket.cps.bucket
       SUMMARY_OUTPUT_PREFIX     = "resumo/"
       BEDROCK_MODEL_ID          = var.bedrock_model_id
       BEDROCK_REGION            = var.bedrock_region
@@ -327,10 +344,10 @@ resource "aws_cloudwatch_event_rule" "s3_video_upload" {
   event_pattern = jsonencode({
     "source" : ["aws.s3"],
     "detail-type" : ["Object Created"],
-    "detail" : {
-      "bucket" : {
-        "name" : [var.cps_bucket_name]
-      },
+      "detail" : {
+        "bucket" : {
+          "name" : [aws_s3_bucket.cps.bucket]
+        },
       "object" : {
         "key" : [{
           "prefix" : "video/"
@@ -362,10 +379,10 @@ resource "aws_cloudwatch_event_rule" "s3_srt_created" {
   event_pattern = jsonencode({
     "source" : ["aws.s3"],
     "detail-type" : ["Object Created"],
-    "detail" : {
-      "bucket" : {
-        "name" : [var.cps_bucket_name]
-      },
+      "detail" : {
+        "bucket" : {
+          "name" : [aws_s3_bucket.cps.bucket]
+        },
       "object" : {
         "key" : [{
           "prefix" : "transcribe/"
