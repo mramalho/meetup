@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
 set -e
 
-CPS_BUCKET="aws-community-cps"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TF_DIR="${ROOT_DIR}/terraform"
+
+# Obter nome do bucket CPS do Terraform (ou usar default)
+cd "${TF_DIR}"
+CPS_BUCKET=$(terraform output -raw cps_bucket_name 2>/dev/null || echo "aws-community-cps")
+cd "${ROOT_DIR}"
+
+echo ">> Usando bucket CPS: ${CPS_BUCKET}"
 REGION="us-east-2"
 
 echo ">> ATENÇÃO: Este script irá apagar TODOS os arquivos de:"

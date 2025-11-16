@@ -27,6 +27,12 @@
       <input type="file" id="promptFile" accept=".txt,.md" />
       <p class="prompt-help-text">Se não enviar, será usado o prompt padrão</p>
       
+      <h3 class="model-title">Modelo LLM</h3>
+      <select id="modelSelect" class="model-select">
+        <option value="">Carregando modelos...</option>
+      </select>
+      <p class="model-help-text">Selecione o modelo de IA para gerar o resumo</p>
+      
       <button id="uploadBtn" class="btn-primary">📤 Enviar</button>
       <p id="uploadStatus" class="status-text"></p>
     </section>

@@ -1,7 +1,7 @@
 AWS.config.update({
   region: "us-east-2",
   credentials: new AWS.CognitoIdentityCredentials({
-    IdentityPoolId: "us-east-2:2c6a2b2e-395c-452c-8f7b-c4db0346767e"
+    IdentityPoolId: "us-east-2:d179bf95-6b80-44d8-bece-bb26bb6d1bb2"
   })
 });
 
@@ -32,6 +32,7 @@ if (typeof mermaid !== 'undefined') {
 const videoBucket = "aws-community-cps";
 const videoPrefix = "video/";
 const promptPrefix = "prompts/";
+const modelPrefix = "models/";
 const srtPrefix   = "transcribe/";
 const mdPrefix    = "resumo/";
 
@@ -45,8 +46,62 @@ const refreshBtn     = document.getElementById("refreshBtn");
 const downloadBtn    = document.getElementById("downloadBtn");
 const darkModeToggle = document.getElementById("darkModeToggle");
 const tabs           = document.querySelectorAll(".tab");
+const modelSelect     = document.getElementById("modelSelect");
 
 let currentSelected = null;
+let availableModels = [];
+
+// Carregar modelos do JSON
+async function loadModels() {
+  try {
+    const response = await fetch("models.json");
+    if (!response.ok) {
+      throw new Error(`Erro ao carregar models.json: ${response.status}`);
+    }
+    const data = await response.json();
+    availableModels = data.models || [];
+    
+    // Limpar opções existentes
+    modelSelect.innerHTML = "";
+    
+    // Adicionar opções dos modelos
+    availableModels.forEach(model => {
+      const option = document.createElement("option");
+      option.value = model.id;
+      option.textContent = model.name;
+      if (model.description) {
+        option.title = model.description;
+      }
+      modelSelect.appendChild(option);
+    });
+    
+    // Selecionar o primeiro modelo por padrão
+    if (availableModels.length > 0) {
+      modelSelect.value = availableModels[0].id;
+    }
+    
+    console.log(`✅ ${availableModels.length} modelos carregados com sucesso`);
+  } catch (err) {
+    console.error("Erro ao carregar modelos:", err);
+    modelSelect.innerHTML = '<option value="">Erro ao carregar modelos</option>';
+    // Fallback: adicionar modelos padrão em caso de erro
+    const fallbackModels = [
+      { id: "anthropic.claude-haiku-4-5-20251001-v1:0", name: "Claude Haiku 4.5" },
+      { id: "amazon.nova-lite-v1:0", name: "Amazon Nova Lite" },
+      { id: "deepseek.r1-v1:0", name: "DeepSeek R1" }
+    ];
+    fallbackModels.forEach(model => {
+      const option = document.createElement("option");
+      option.value = model.id;
+      option.textContent = model.name;
+      modelSelect.appendChild(option);
+    });
+    availableModels = fallbackModels;
+  }
+}
+
+// Carregar modelos ao iniciar
+loadModels();
 
 // Dark mode
 darkModeToggle.addEventListener("click", () => {
@@ -81,6 +136,13 @@ uploadBtn.addEventListener("click", async () => {
   const promptInput = document.getElementById("promptFile");
   const videoFile = fileInput.files[0];
   const promptFile = promptInput.files[0];
+  const selectedModel = modelSelect.value;
+  
+  // Validar se um modelo foi selecionado
+  if (!selectedModel || selectedModel === "") {
+    alert("Selecione um modelo LLM primeiro!");
+    return;
+  }
 
   if (!videoFile) {
     alert("Selecione um arquivo .mp4 primeiro!");
@@ -122,9 +184,10 @@ uploadBtn.addEventListener("click", async () => {
     
     await s3.upload(videoParams).promise();
     
+    const baseName = videoFile.name.split(".").slice(0, -1).join(".");
+    
     // Upload do prompt se fornecido
     if (promptFile) {
-      const baseName = videoFile.name.split(".").slice(0, -1).join(".");
       const promptKey = promptPrefix + baseName + ".txt";
       
       const promptParams = {
@@ -135,15 +198,34 @@ uploadBtn.addEventListener("click", async () => {
       };
       
       await s3.upload(promptParams).promise();
-      uploadStatus.innerText = "✅ Upload concluído! Vídeo e prompt enviados. A transcrição será gerada em alguns minutos.";
+    }
+    
+    // Upload do modelo selecionado
+    const modelKey = modelPrefix + baseName + ".txt";
+    const modelParams = {
+      Bucket: videoBucket,
+      Key: modelKey,
+      Body: selectedModel,
+      ContentType: "text/plain"
+    };
+    
+    await s3.upload(modelParams).promise();
+    
+    // Mensagem de sucesso
+    if (promptFile) {
+      uploadStatus.innerText = "✅ Upload concluído! Vídeo, prompt e modelo enviados. A transcrição será gerada em alguns minutos.";
     } else {
-      uploadStatus.innerText = "✅ Upload concluído! A transcrição será gerada em alguns minutos.";
+      uploadStatus.innerText = "✅ Upload concluído! Vídeo e modelo enviados. A transcrição será gerada em alguns minutos.";
     }
     
     uploadStatus.style.color = "green";
     uploadStatus.className = "status-text status-success";
     fileInput.value = "";
     promptInput.value = "";
+    // Reset para o primeiro modelo (se houver modelos carregados)
+    if (availableModels.length > 0) {
+      modelSelect.value = availableModels[0].id;
+    }
   } catch (err) {
     console.error("Erro no upload:", err);
     let errorMsg = "❌ Erro no upload.";
