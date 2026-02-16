@@ -14,6 +14,7 @@ Sistema completo para processamento automatizado de vídeos que gera transcriç�
 - [Deploy](#deploy)
 - [Uso](#uso)
 - [Scripts Disponíveis](#scripts-disponíveis)
+- [Apresentação](#apresentação)
 
 ## 🎯 Visão Geral
 
@@ -207,70 +208,88 @@ meetup/
 ├── app/                          # Frontend estático
 │   ├── index.html               # Página principal
 │   ├── app.js                   # Lógica JavaScript
+│   ├── models.json              # Lista de modelos Bedrock para o seletor
 │   ├── styles.css               # Estilos CSS
 │   ├── error.html               # Página de erro 404
-│   └── assets/                  # Assets estáticos
+│   └── assets/
 │       └── logo.svg             # Logo AWS Community Campinas
 │
 ├── terraform/                    # Infraestrutura como código
 │   ├── main.tf                  # Recursos principais
-│   ├── variables.tf             # Variáveis do Terraform
-│   ├── outputs.tf               # Outputs do Terraform
-│   ├── terraform.tfvars         # Valores das variáveis (não versionado)
-│   ├── lambda/                  # Código das Lambdas
+│   ├── variables.tf             # Variáveis
+│   ├── outputs.tf               # Outputs (identity_pool_id, buckets, cloudfront_distribution_id)
+│   ├── terraform.tfvars         # Valores (não versionado)
+│   ├── lambda/
 │   │   ├── lambda_function.py   # Lambda de transcrição
 │   │   └── lambda_bedrock_summary.py  # Lambda de resumo
-│   └── build/                   # Arquivos ZIP das Lambdas
-│       ├── start_transcribe.zip
-│       └── bedrock_summary.zip
+│   └── build/                   # ZIPs das Lambdas (gerados por build_lambdas.sh)
 │
 ├── script/                       # Scripts de automação
-│   ├── build_lambdas.sh         # Build das Lambdas
-│   ├── deploy_app.sh            # Deploy do frontend
-│   ├── terraform_deploy.sh      # Deploy da infraestrutura
-│   └── clear_files.sh           # Limpeza de arquivos S3
+│   ├── setup-acm-certificate.sh # Cria certificado ACM (us-east-1) via AWS CLI
+│   ├── setup-iam-prereqs.sh     # Cria usuário IAM opcional para deploy
+│   ├── update_app_config.sh    # Atualiza app.js com outputs do Terraform
+│   ├── build_lambdas.sh         # Empacota as Lambdas
+│   ├── terraform_deploy.sh      # terraform init + apply + update_app_config
+│   ├── deploy_app.sh            # Sync S3 + invalidação CloudFront (ID via Terraform)
+│   ├── clear_files.sh           # Limpeza de video/ e transcribe/ no S3
+│   ├── destroy_all.sh          # Destrói toda a infra (terraform destroy)
+│   └── prompt.md                # Exemplo de prompt para resumos
 │
-├── .gitignore                   # Arquivos ignorados pelo Git
-└── README.md                    # Este arquivo
+├── .gitignore
+├── README.md
+└── PRESENTATION.md              # Base para apresentação do projeto
 ```
 
 ## ⚙️ Configuração
 
-### 1. Variáveis do Terraform
+### 1. Pré-requisitos AWS (opcional: scripts com AWS CLI)
 
-Crie um arquivo `terraform/terraform.tfvars` com suas configurações:
+Para simplificar a criação da infraestrutura, use os scripts que criam certificado e usuário IAM via AWS CLI:
 
-```hcl
-aws_region = "us-east-2"
+**Certificado ACM (obrigatório para HTTPS no CloudFront)**  
+O certificado deve estar em **us-east-1**. Com domínio e hosted zone no Route53:
 
-app_bucket_name = "aws-community-app"
-cps_bucket_name = "aws-community-cps"
-
-domain_name = "meetup.ramalho.dev.br"
-
-# Certificado ACM (deve estar em us-east-1 para CloudFront)
-acm_certificate_arn = "arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/CERT_ID"
-
-# Hosted Zone do Route53
-hosted_zone_id = "Z1234567890ABC"
-
-# Configurações do Bedrock
-bedrock_region = "us-east-2"
-bedrock_model_id = "deepseek.r1-v1:0"
-bedrock_inference_profile = "us.deepseek.r1-v1:0"
+```bash
+export DOMAIN_NAME="meetup.ramalho.dev.br"
+export HOSTED_ZONE_ID="Z1234567890ABC"   # ID da hosted zone do domínio
+bash script/setup-acm-certificate.sh
 ```
 
-### 2. Configuração do Frontend
+O script exibe o `acm_certificate_arn`; adicione-o no `terraform.tfvars`. Se não usar `HOSTED_ZONE_ID`, valide o certificado manualmente no console ACM.
 
-Atualize o `IdentityPoolId` no arquivo `app/app.js` após o deploy do Terraform:
+**Usuário IAM para deploy (opcional)**  
+Para um usuário dedicado com permissões de deploy:
 
-```javascript
-AWS.config.update({
-  region: "us-east-2",
-  credentials: new AWS.CognitoIdentityCredentials({
-    IdentityPoolId: "us-east-2:SEU_IDENTITY_POOL_ID"  // Obtenha do output do Terraform
-  })
-});
+```bash
+export DEPLOY_USER_NAME="aws-meetup-deploy"
+bash script/setup-iam-prereqs.sh
+```
+
+Depois crie uma Access Key no console IAM e use `aws configure`.
+
+### 2. Variáveis do Terraform
+
+Crie `terraform/terraform.tfvars`:
+
+```hcl
+aws_region         = "us-east-2"
+app_bucket_name    = "aws-community-app"
+cps_bucket_name    = "aws-community-cps"
+domain_name        = "meetup.ramalho.dev.br"
+acm_certificate_arn = "arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/CERT_ID"  # Saída do setup-acm-certificate.sh
+hosted_zone_id     = "Z1234567890ABC"
+
+bedrock_region            = "us-east-2"
+bedrock_model_id          = "anthropic.claude-haiku-4-5-20251001-v1:0"
+bedrock_inference_profile = ""   # Preencher para DeepSeek R1: "us.deepseek.r1-v1:0"
+```
+
+### 3. Configuração do Frontend
+
+Após `terraform apply`, o script `update_app_config.sh` (executado por `terraform_deploy.sh` ou `deploy_app.sh`) atualiza automaticamente o `app.js` com `IdentityPoolId` e nome do bucket CPS. Se fizer deploy manual, rode:
+
+```bash
+bash script/update_app_config.sh
 ```
 
 ## 🚀 Deploy
@@ -300,7 +319,7 @@ terraform plan
 terraform apply
 ```
 
-**Importante**: Anote o `identity_pool_id` do output do Terraform e atualize o `app.js`.
+O script `terraform_deploy.sh` já roda `update_app_config.sh` ao final, atualizando o `app.js` com `identity_pool_id` e nome do bucket.
 
 ### 3. Deploy do Frontend
 
@@ -308,9 +327,7 @@ terraform apply
 bash script/deploy_app.sh
 ```
 
-Este script:
-- Faz sync dos arquivos do `app/` para o bucket S3
-- Invalida o cache do CloudFront
+Este script obtém o bucket do app e o ID do CloudFront dos outputs do Terraform, faz sync do `app/` para o S3 e invalida o cache do CloudFront. Execute `terraform apply` antes da primeira vez.
 
 ## 💻 Uso
 
@@ -366,33 +383,33 @@ Você pode personalizar os resumos enviando um arquivo de prompt junto com o ví
 
 ## 🛠️ Scripts Disponíveis
 
-### `build_lambdas.sh`
-Empacota as funções Lambda em arquivos ZIP para deploy.
+| Script | Descrição |
+|--------|-----------|
+| `setup-acm-certificate.sh` | Cria certificado ACM em us-east-1 (variáveis: `DOMAIN_NAME`, opcional `HOSTED_ZONE_ID`). |
+| `setup-iam-prereqs.sh` | Cria usuário IAM opcional para deploy (variável: `DEPLOY_USER_NAME`). |
+| `update_app_config.sh` | Atualiza `app.js` com `identity_pool_id` e bucket CPS a partir dos outputs do Terraform. |
+| `build_lambdas.sh` | Empacota as Lambdas em ZIP em `terraform/build/`. |
+| `terraform_deploy.sh` | `terraform init` + `apply` + `update_app_config.sh`. |
+| `deploy_app.sh` | Sync do `app/` para o S3 e invalidação do CloudFront (usa outputs do Terraform). |
+| `clear_files.sh` | **⚠️ CUIDADO**: Apaga todos os arquivos em `video/` e `transcribe/` do bucket CPS. |
+| `destroy_all.sh` | **⚠️ DESTRÓI TUDO**: Remove toda a infraestrutura com `terraform destroy`. Confirmação digitando `sim`; use `AUTO_APPROVE=1` para pular. |
+
+Exemplos:
 
 ```bash
+# Pré-requisitos (certificado e opcionalmente IAM)
+DOMAIN_NAME=meetup.ramalho.dev.br HOSTED_ZONE_ID=Z... bash script/setup-acm-certificate.sh
+DEPLOY_USER_NAME=aws-meetup-deploy bash script/setup-iam-prereqs.sh
+
+# Deploy completo
 bash script/build_lambdas.sh
-```
-
-### `deploy_app.sh`
-Faz deploy do frontend para o S3 e invalida o cache do CloudFront.
-
-```bash
+bash script/terraform_deploy.sh
 bash script/deploy_app.sh
 ```
 
-### `terraform_deploy.sh`
-Inicializa e aplica a infraestrutura com Terraform.
+## 📽️ Apresentação
 
-```bash
-bash script/terraform_deploy.sh
-```
-
-### `clear_files.sh`
-**⚠️ CUIDADO**: Apaga todos os arquivos dos diretórios `video/` e `transcribe/` do bucket S3.
-
-```bash
-bash script/clear_files.sh
-```
+O arquivo [PRESENTATION.md](PRESENTATION.md) contém uma base em Markdown para criação de slides (por exemplo, para meetups ou demos): visão geral, arquitetura, fluxo e passos de deploy.
 
 ## 🔧 Manutenção
 

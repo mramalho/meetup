@@ -18,6 +18,31 @@ MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "amazon.nova-lite-v1:0")
 inference_profile_raw = os.environ.get("BEDROCK_INFERENCE_PROFILE", None)
 INFERENCE_PROFILE = inference_profile_raw if inference_profile_raw and inference_profile_raw.strip() else None
 
+# Nome do arquivo do prompt padrão (empacotado junto com a Lambda; origem: script/guardrails.md)
+DEFAULT_PROMPT_FILENAME = "guardrails.md"
+
+
+def _load_default_system_prompt() -> str:
+    """Carrega o prompt padrão do arquivo guardrails.md empacotado na Lambda."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), DEFAULT_PROMPT_FILENAME)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            text = f.read().strip()
+        if text:
+            print(f"Prompt padrão carregado de {DEFAULT_PROMPT_FILENAME} ({len(text)} caracteres)")
+            return text
+    except OSError as e:
+        print(f"Arquivo guardrails.md não encontrado ou erro ao ler: {e}")
+    return (
+        "Você é um assistente especializado em resumir conteúdos de palestras, "
+        "aulas e vídeos técnicos. Gere um resumo detalhado em português, em formato "
+        "Markdown, com seções, tópicos e, se fizer sentido, bullets e subtítulos.\n\n"
+        "Regras:\n"
+        "- Não invente conteúdo que não esteja na transcrição.\n"
+        "- Mantenha o foco nas ideias principais, exemplos importantes e conclusões.\n"
+        "- Se houver passos práticos, destaque-os em listas numeradas."
+    )
+
 
 def extract_plain_text_from_srt(srt_str: str) -> str:
     """
@@ -75,35 +100,40 @@ def extract_video_base_name(srt_filename: str) -> str:
 
 def get_system_prompt(base_name: str, bucket: str) -> str:
     """
-    Tenta ler o prompt personalizado do S3.
-    Se não encontrar, retorna o prompt padrão.
+    Monta o system prompt combinando:
+    - guardrails.md: guardrails (regras gerais), sempre aplicados.
+    - prompts/{base_name}.txt no S3: prompt personalizado do usuário, quando existir.
+    Quando ambos existem, os dois são enviados em conjunto (guardrails + instruções específicas).
     """
+    guardrails = _load_default_system_prompt()
+
     prompt_key = f"prompts/{base_name}.txt"
-    
     try:
         print(f"Tentando ler prompt personalizado de s3://{bucket}/{prompt_key}")
         response = s3_client.get_object(Bucket=bucket, Key=prompt_key)
-        prompt_text = response["Body"].read().decode("utf-8", errors="ignore")
-        print(f"Prompt personalizado encontrado e carregado ({len(prompt_text)} caracteres)")
-        return prompt_text.strip()
+        custom_text = response["Body"].read().decode("utf-8", errors="ignore").strip()
+        if custom_text:
+            print(f"Prompt personalizado encontrado ({len(custom_text)} caracteres). Usando guardrails + prompt personalizado.")
+            return _combine_prompts(guardrails, custom_text)
     except ClientError as e:
         error_code = e.response.get("Error", {}).get("Code", "")
         if error_code == "NoSuchKey":
-            print(f"Prompt personalizado não encontrado em {prompt_key}, usando prompt padrão")
+            print(f"Prompt personalizado não encontrado em {prompt_key}, usando apenas guardrails (guardrails.md)")
         elif error_code == "AccessDenied":
-            print(f"Sem permissão para ler {prompt_key}, usando prompt padrão")
+            print(f"Sem permissão para ler {prompt_key}, usando apenas guardrails (guardrails.md)")
         else:
-            print(f"Erro ao ler prompt personalizado: {e}, usando prompt padrão")
-    
-    # Prompt padrão
+            print(f"Erro ao ler prompt personalizado: {e}, usando apenas guardrails (guardrails.md)")
+
+    return guardrails
+
+
+def _combine_prompts(guardrails: str, custom_prompt: str) -> str:
+    """Combina guardrails (guardrails.md) com o prompt personalizado em um único system prompt."""
     return (
-        "Você é um assistente especializado em resumir conteúdos de palestras, "
-        "aulas e vídeos técnicos. Gere um resumo detalhado em português, em formato "
-        "Markdown, com seções, tópicos e, se fizer sentido, bullets e subtítulos.\n\n"
-        "Regras:\n"
-        "- Não invente conteúdo que não esteja na transcrição.\n"
-        "- Mantenha o foco nas ideias principais, exemplos importantes e conclusões.\n"
-        "- Se houver passos práticos, destaque-os em listas numeradas."
+        f"{guardrails}\n\n"
+        "---\n"
+        "Instruções específicas para este vídeo (prompt personalizado):\n\n"
+        f"{custom_prompt}"
     )
 
 

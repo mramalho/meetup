@@ -22,3 +22,8 @@ output "app_bucket_name" {
   description = "Nome do bucket do app"
   value       = aws_s3_bucket.app.bucket
 }
+
+output "cloudfront_distribution_id" {
+  description = "ID da distribuição CloudFront (para deploy e invalidação)"
+  value       = aws_cloudfront_distribution.app_cdn.id
+}

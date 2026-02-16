@@ -253,11 +253,7 @@ async function loadSRTFiles() {
   srtListDiv.innerHTML = "";
 
   (result.Contents || []).forEach(obj => {
-    if (!obj.Key.toLowerCase().endswith && !obj.Key.toLowerCase().endsWith) {} // guard
-  });
-
-  (result.Contents || []).forEach(obj => {
-    if (!obj.Key.toLowerCase().endsWith(".srt")) return;
+    if (!obj.Key || !obj.Key.toLowerCase().endsWith(".srt")) return;
 
     const el = document.createElement("div");
     el.className = "file-item";
@@ -279,7 +275,7 @@ async function loadMDFiles() {
   mdListDiv.innerHTML = "";
 
   (result.Contents || []).forEach(obj => {
-    if (!obj.Key.toLowerCase().endsWith(".md")) return;
+    if (!obj.Key || !obj.Key.toLowerCase().endsWith(".md")) return;
 
     const el = document.createElement("div");
     el.className = "file-item";

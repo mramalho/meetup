@@ -1,48 +1,48 @@
 #!/usr/bin/env bash
 set -e
 
-REGION="us-east-2"
-CLOUDFRONT_DISTRIBUTION_ID="E12JY6O9FF1FV"
-
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TF_DIR="${ROOT_DIR}/terraform"
-UPDATE_SCRIPT="${ROOT_DIR}/script/update_identity_pool_id.sh"
-UPDATE_BUCKET_SCRIPT="${ROOT_DIR}/script/update_bucket_names.sh"
+UPDATE_APP_CONFIG="${ROOT_DIR}/script/update_app_config.sh"
 
-# Obter nome do bucket do app do Terraform (ou usar default)
+# Obter do Terraform (exige terraform apply já executado)
 cd "${TF_DIR}"
 APP_BUCKET=$(terraform output -raw app_bucket_name 2>/dev/null || echo "aws-community-app")
+CLOUDFRONT_DISTRIBUTION_ID=$(terraform output -raw cloudfront_distribution_id 2>/dev/null || echo "")
 cd "${ROOT_DIR}"
+
+REGION="${AWS_REGION:-us-east-2}"
+
+if [ -z "$CLOUDFRONT_DISTRIBUTION_ID" ]; then
+  echo "⚠️  cloudfront_distribution_id não encontrado no Terraform. Execute 'terraform apply' antes do deploy."
+  echo "   Para apenas publicar no S3 (sem invalidação), defina SKIP_CLOUDFRONT_INVALIDATION=1"
+  if [ "${SKIP_CLOUDFRONT_INVALIDATION}" != "1" ]; then
+    exit 1
+  fi
+fi
 
 echo ">> Usando bucket do app: ${APP_BUCKET}"
 
-# Atualizar IdentityPoolId antes do deploy (se o script existir e o Terraform estiver aplicado)
-if [ -f "$UPDATE_SCRIPT" ]; then
-  echo ">> Verificando e atualizando IdentityPoolId no app.js..."
-  bash "$UPDATE_SCRIPT" || echo "⚠️  Não foi possível atualizar o IdentityPoolId. Continuando com o deploy..."
-fi
-
-# Atualizar nome do bucket CPS antes do deploy
-if [ -f "$UPDATE_BUCKET_SCRIPT" ]; then
-  echo ">> Verificando e atualizando nome do bucket CPS no app.js..."
-  bash "$UPDATE_BUCKET_SCRIPT" || echo "⚠️  Não foi possível atualizar o nome do bucket. Continuando com o deploy..."
+# Atualizar app.js com identity_pool_id e bucket do Terraform
+if [ -f "$UPDATE_APP_CONFIG" ]; then
+  echo ">> Atualizando config do app (IdentityPoolId, bucket)..."
+  bash "$UPDATE_APP_CONFIG" || true
 fi
 
 echo ">> Publicando app para s3://${APP_BUCKET}"
 aws s3 sync "${ROOT_DIR}/app" "s3://${APP_BUCKET}/" --delete --region "${REGION}"
 
-echo ">> Invalidando cache do CloudFront"
-INVALIDATION_ID=$(aws cloudfront create-invalidation \
-  --distribution-id "${CLOUDFRONT_DISTRIBUTION_ID}" \
-  --paths "/*" \
-  --query 'Invalidation.Id' \
-  --output text)
-
-echo ">> Invalidação criada: ${INVALIDATION_ID}"
-echo ">> Aguardando propagação (pode levar alguns minutos)..."
-
-aws cloudfront wait invalidation-completed \
-  --distribution-id "${CLOUDFRONT_DISTRIBUTION_ID}" \
-  --id "${INVALIDATION_ID}" 2>/dev/null || echo ">> Invalidação em progresso (pode levar alguns minutos para completar)"
+if [ -n "$CLOUDFRONT_DISTRIBUTION_ID" ] && [ "${SKIP_CLOUDFRONT_INVALIDATION}" != "1" ]; then
+  echo ">> Invalidando cache do CloudFront (${CLOUDFRONT_DISTRIBUTION_ID})"
+  INVALIDATION_ID=$(aws cloudfront create-invalidation \
+    --distribution-id "${CLOUDFRONT_DISTRIBUTION_ID}" \
+    --paths "/*" \
+    --query 'Invalidation.Id' \
+    --output text)
+  echo ">> Invalidação criada: ${INVALIDATION_ID}"
+  aws cloudfront wait invalidation-completed \
+    --distribution-id "${CLOUDFRONT_DISTRIBUTION_ID}" \
+    --id "${INVALIDATION_ID}" 2>/dev/null || echo ">> Invalidação em progresso."
+fi
 
 echo ">> Deploy do app concluído."
