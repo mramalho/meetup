@@ -51,3 +51,15 @@ variable "bedrock_inference_profile" {
   type        = string
   default     = ""
 }
+
+variable "observability_debug" {
+  description = "Feature flag: 1 = log detalhado (evento completo, respostas API) no CloudWatch. Use para troubleshooting."
+  type        = string
+  default     = "0"
+}
+
+variable "observability_trace" {
+  description = "Feature flag: 1 = log de cada etapa do fluxo (trace). Use para debugging."
+  type        = string
+  default     = "0"
+}

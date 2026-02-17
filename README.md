@@ -140,7 +140,6 @@ sequenceDiagram
   - Download de arquivos
   - Modo claro/escuro
   - Botões de ação integrados (Atualizar, Dark Mode)
-  - Logo AWS Community Campinas no header
 
 ### Backend (Serverless)
 
@@ -201,6 +200,28 @@ sequenceDiagram
 2. Solicite acesso ao modelo **DeepSeek R1** (ou use outro modelo compatível)
 3. Verifique que o inference profile `us.deepseek.r1-v1:0` está disponível
 
+### Backend Terraform (state remoto)
+
+O state do Terraform é armazenado em S3:
+
+- **Bucket**: `mramalho-tfvars`
+- **Path**: `meetup/terraform.tfstate` (projeto meetup)
+
+Antes do primeiro `terraform init`, crie o bucket (se não existir):
+
+```bash
+bash script/setup-terraform-backend.sh
+```
+
+O script aplica as mesmas práticas de segurança do projeto:
+- **Block Public Access**: nenhum acesso público (state pode conter dados sensíveis)
+- **Criptografia SSE-S3** (AES256)
+- **Versionamento** (recuperação de state)
+
+O `create-all.sh` executa esse passo automaticamente.
+
+**Migração de state local para S3**: Se você já tem state local (`terraform.tfstate`), execute `terraform init` e responda `yes` quando perguntado sobre migrar o state existente.
+
 ## 📁 Estrutura do Projeto
 
 ```
@@ -211,11 +232,10 @@ meetup/
 │   ├── models.json              # Lista de modelos Bedrock para o seletor
 │   ├── styles.css               # Estilos CSS
 │   ├── error.html               # Página de erro 404
-│   └── assets/
-│       └── logo.svg             # Logo AWS Community Campinas
+│   └── assets/                 # Assets estáticos (se houver)
 │
 ├── terraform/                    # Infraestrutura como código
-│   ├── main.tf                  # Recursos principais
+│   ├── main.tf                  # Recursos principais (backend S3: s3://mramalho-tfvars/meetup)
 │   ├── variables.tf             # Variáveis
 │   ├── outputs.tf               # Outputs (identity_pool_id, buckets, cloudfront_distribution_id)
 │   ├── terraform.tfvars         # Valores (não versionado)
@@ -225,6 +245,10 @@ meetup/
 │   └── build/                   # ZIPs das Lambdas (gerados por build_lambdas.sh)
 │
 ├── script/                       # Scripts de automação
+│   ├── config.env.example       # Exemplo de config para create-all
+│   ├── create-all.sh           # Cria TUDO do zero (ACM, IAM, Terraform, app)
+│   ├── destroy-all.sh          # Destrói TUDO (Terraform, ACM, IAM)
+│   ├── setup-terraform-backend.sh # Cria bucket S3 para state (mramalho-tfvars)
 │   ├── setup-acm-certificate.sh # Cria certificado ACM (us-east-1) via AWS CLI
 │   ├── setup-iam-prereqs.sh     # Cria usuário IAM opcional para deploy
 │   ├── update_app_config.sh    # Atualiza app.js com outputs do Terraform
@@ -232,7 +256,6 @@ meetup/
 │   ├── terraform_deploy.sh      # terraform init + apply + update_app_config
 │   ├── deploy_app.sh            # Sync S3 + invalidação CloudFront (ID via Terraform)
 │   ├── clear_files.sh           # Limpeza de video/ e transcribe/ no S3
-│   ├── destroy_all.sh          # Destrói toda a infra (terraform destroy)
 │   └── prompt.md                # Exemplo de prompt para resumos
 │
 ├── .gitignore
@@ -241,6 +264,20 @@ meetup/
 ```
 
 ## ⚙️ Configuração
+
+### 0. Configuração para create-all.sh (fluxo simplificado)
+
+Se usar `create-all.sh`, crie o arquivo de configuração:
+
+```bash
+cp script/config.env.example script/config.env
+```
+
+Edite `script/config.env` e defina pelo menos:
+- `DOMAIN_NAME` – domínio do site (ex: meetup.ramalho.dev.br)
+- `HOSTED_ZONE_ID` – ID da hosted zone no Route53 (ou deixe vazio para descoberta automática)
+
+Opcional: `CREATE_ACM=1`, `CREATE_IAM_USER=0`, etc. Veja `config.env.example` para todas as opções.
 
 ### 1. Pré-requisitos AWS (opcional: scripts com AWS CLI)
 
@@ -286,15 +323,46 @@ bedrock_inference_profile = ""   # Preencher para DeepSeek R1: "us.deepseek.r1-v
 
 ### 3. Configuração do Frontend
 
-Após `terraform apply`, o script `update_app_config.sh` (executado por `terraform_deploy.sh` ou `deploy_app.sh`) atualiza automaticamente o `app.js` com `IdentityPoolId` e nome do bucket CPS. Se fizer deploy manual, rode:
+Após `terraform apply`, o script `update_app_config.sh` (executado por `terraform_deploy.sh` ou `deploy_app.sh`) gera o `app/config.json` com `identityPoolId`, `region` e `videoBucket`. O `app.js` carrega esse arquivo em runtime. Se fizer deploy manual, rode:
 
 ```bash
 bash script/update_app_config.sh
 ```
 
+Para desenvolvimento local sem deploy, crie `app/config.json` manualmente (use `app/config.json.example` como base).
+
 ## 🚀 Deploy
 
-### 1. Build das Lambdas
+### Opção 1: Deploy do zero (recomendado)
+
+Um único fluxo cria certificado ACM, IAM (opcional), Terraform e frontend:
+
+```bash
+# 1. Copiar e editar a configuração
+cp script/config.env.example script/config.env
+nano script/config.env   # Preencha DOMAIN_NAME e HOSTED_ZONE_ID (ou deixe vazio para descoberta automática)
+
+# 2. Criar tudo
+bash script/create-all.sh
+```
+
+O `create-all.sh`:
+- Descobre `HOSTED_ZONE_ID` automaticamente (se vazio e domínio no Route53)
+- Cria certificado ACM via AWS CLI e valida via DNS
+- Cria usuário IAM opcional para deploy
+- Gera `terraform.tfvars`, faz build das Lambdas, Terraform apply e deploy do app
+
+**Para destruir tudo** (Terraform, ACM, IAM criados pelo create-all):
+
+```bash
+bash script/destroy-all.sh
+# Digite 'sim' para confirmar
+# Ou: AUTO_APPROVE=1 bash script/destroy-all.sh
+```
+
+### Opção 2: Deploy manual (passo a passo)
+
+#### 1. Build das Lambdas
 
 ```bash
 bash script/build_lambdas.sh
@@ -304,7 +372,7 @@ Este script:
 - Cria o diretório `terraform/build/` se não existir
 - Empacota as funções Lambda em arquivos ZIP
 
-### 2. Deploy da Infraestrutura
+#### 2. Deploy da Infraestrutura
 
 ```bash
 bash script/terraform_deploy.sh
@@ -321,7 +389,7 @@ terraform apply
 
 O script `terraform_deploy.sh` já roda `update_app_config.sh` ao final, atualizando o `app.js` com `identity_pool_id` e nome do bucket.
 
-### 3. Deploy do Frontend
+#### 3. Deploy do Frontend
 
 ```bash
 bash script/deploy_app.sh
@@ -385,6 +453,10 @@ Você pode personalizar os resumos enviando um arquivo de prompt junto com o ví
 
 | Script | Descrição |
 |--------|-----------|
+| `create-all.sh` | **Cria tudo do zero**: ACM, IAM (opcional), Terraform e deploy do app. Usa `config.env`. |
+| `destroy-all.sh` | **⚠️ DESTRÓI TUDO**: Terraform, certificado ACM e usuário IAM (se criados pelo create-all). Confirmação digitando `sim`; use `AUTO_APPROVE=1` para pular. |
+| `config.env.example` | Template de configuração. Copie para `config.env` e edite. |
+| `setup-terraform-backend.sh` | Cria bucket S3 `mramalho-tfvars` para state remoto (path: `meetup/terraform.tfstate`). Aplica Block Public Access, criptografia SSE-S3 e versionamento. Execute antes do primeiro `terraform init`. |
 | `setup-acm-certificate.sh` | Cria certificado ACM em us-east-1 (variáveis: `DOMAIN_NAME`, opcional `HOSTED_ZONE_ID`). |
 | `setup-iam-prereqs.sh` | Cria usuário IAM opcional para deploy (variável: `DEPLOY_USER_NAME`). |
 | `update_app_config.sh` | Atualiza `app.js` com `identity_pool_id` e bucket CPS a partir dos outputs do Terraform. |
@@ -392,9 +464,20 @@ Você pode personalizar os resumos enviando um arquivo de prompt junto com o ví
 | `terraform_deploy.sh` | `terraform init` + `apply` + `update_app_config.sh`. |
 | `deploy_app.sh` | Sync do `app/` para o S3 e invalidação do CloudFront (usa outputs do Terraform). |
 | `clear_files.sh` | **⚠️ CUIDADO**: Apaga todos os arquivos em `video/` e `transcribe/` do bucket CPS. |
-| `destroy_all.sh` | **⚠️ DESTRÓI TUDO**: Remove toda a infraestrutura com `terraform destroy`. Confirmação digitando `sim`; use `AUTO_APPROVE=1` para pular. |
 
 Exemplos:
+
+```bash
+# Fluxo simplificado (recomendado)
+cp script/config.env.example script/config.env
+# Edite config.env com DOMAIN_NAME e HOSTED_ZONE_ID
+bash script/create-all.sh
+
+# Para destruir tudo
+bash script/destroy-all.sh
+```
+
+Ou deploy manual:
 
 ```bash
 # Pré-requisitos (certificado e opcionalmente IAM)
@@ -435,6 +518,24 @@ aws logs tail /aws/lambda/start-transcribe-on-s3-upload --follow
 aws logs tail /aws/lambda/generate-summary-from-srt-bedrock --follow
 ```
 
+### Observabilidade (feature flags)
+
+Para troubleshooting quando legendas ou resumos não são gerados, ative logs detalhados:
+
+| Flag | Descrição |
+|------|-----------|
+| `observability_trace=1` | Log de cada etapa (bucket, key, etapas do fluxo) |
+| `observability_debug=1` | Log completo do evento e respostas da API |
+
+Em `terraform.tfvars` ou `config.env` (para create-all):
+
+```hcl
+observability_debug = "1"
+observability_trace = "1"
+```
+
+Depois execute `terraform apply` para atualizar as Lambdas. Os logs aparecem no CloudWatch.
+
 ## 📊 Custos Estimados
 
 Os custos variam conforme o uso, mas os principais componentes são:
@@ -448,25 +549,31 @@ Os custos variam conforme o uso, mas os principais componentes são:
 
 ## 🔒 Segurança
 
-- **Cognito Identity Pool**: Acesso não autenticado com permissões limitadas apenas aos prefixos necessários
-- **IAM Policies**: Princípio do menor privilégio aplicado
-- **S3 Bucket Policies**: Acesso público apenas para o bucket do frontend
-- **CloudFront**: HTTPS obrigatório com certificado SSL/TLS
-- **Variáveis Sensíveis**: Armazenadas em variáveis de ambiente das Lambdas
+- **Config em runtime**: `app.js` carrega `config.json` em runtime (gerado no deploy). Nenhum `identityPoolId` ou bucket fica hardcoded no código-fonte.
+- **Cognito Identity Pool**: Acesso não autenticado com permissões limitadas apenas aos prefixos necessários.
+- **CORS restrito**: Bucket CPS aceita requisições apenas do domínio do app e do CloudFront (não `*`).
+- **Criptografia S3**: Bucket CPS usa SSE-S3 (AES256) para dados em repouso.
+- **Security headers**: CloudFront adiciona HSTS, X-Content-Type-Options, X-Frame-Options, X-XSS-Protection, Referrer-Policy.
+- **IAM Policies**: Princípio do menor privilégio aplicado.
+- **S3 Bucket Policies**: Acesso público apenas para o bucket do frontend.
+- **CloudFront**: HTTPS obrigatório com certificado SSL/TLS.
+- **Arquivos não versionados**: `terraform.tfvars`, `script/config.env` e `app/config.json` estão no `.gitignore`.
+- **Backend Terraform**: Bucket `mramalho-tfvars` com Block Public Access, criptografia SSE-S3 e versionamento. O state (`meetup/terraform.tfstate`) não fica no repositório.
+- **Auditoria**: Ver `script/security-audit.md` para revisão de vulnerabilidades e correções aplicadas.
 
 ## 🐛 Troubleshooting
 
 ### Erro no Upload
 
-- Verifique se o `IdentityPoolId` no `app.js` está correto
+- Verifique se o `config.json` existe e contém `identityPoolId` e `videoBucket` corretos
 - Verifique as permissões do Cognito Identity Pool
 - Verifique os logs do navegador (F12)
 
 ### Transcrição não é gerada
 
+- **Causa comum**: O bucket S3 precisa ter notificação EventBridge habilitada (`aws_s3_bucket_notification` com `eventbridge = true`). Sem isso, o EventBridge não recebe eventos.
 - Verifique os logs da Lambda `start-transcribe-on-s3-upload`
-- Verifique se o EventBridge está configurado corretamente
-- Verifique se o Amazon Transcribe tem acesso ao bucket
+- Ative `observability_debug=1` no terraform.tfvars e faça `terraform apply` para ver o evento recebido
 
 ### Resumo não é gerado
 

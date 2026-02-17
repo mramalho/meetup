@@ -1,3 +1,8 @@
+output "aws_region" {
+  description = "Região AWS"
+  value       = var.aws_region
+}
+
 output "cloudfront_domain_name" {
   description = "Domínio do CloudFront"
   value       = aws_cloudfront_distribution.app_cdn.domain_name

@@ -45,50 +45,10 @@ body.dark {
   color: var(--text-main-dark);
 }
 
-/* Header moderno com gradiente */
-.top-bar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  padding: 16px 40px;
-  background: linear-gradient(135deg, #1a1a1a 0%, #333333 100%);
-  color: #fff;
-  box-shadow: var(--shadow-md);
-  position: relative;
-  overflow: hidden;
-}
-
-.top-bar::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: linear-gradient(135deg, rgba(255,255,255,0.05) 0%, transparent 100%);
-  pointer-events: none;
-}
-
-.logo {
-  height: 60px;
-  width: auto;
-  max-width: 300px;
-  position: relative;
-  z-index: 1;
-  object-fit: contain;
-}
-
-.top-actions {
-  display: flex;
-  gap: 12px;
-  position: relative;
-  z-index: 1;
-}
-
 .container {
   display: flex;
   flex-direction: row;
-  height: calc(100vh - 70px);
+  height: 100vh;
   gap: 0;
 }
 
@@ -915,6 +875,46 @@ body.dark .preview-content .mermaid {
   content: 'Carregando diagrama...';
   color: var(--text-secondary-light);
   font-style: italic;
+}
+
+/* Integração com github-markdown-css (WYSIWYG) - evita padding duplicado e garante contraste */
+.preview-content .markdown-body {
+  padding: 0;
+  background: transparent;
+  color: var(--text-main-light);
+  font-size: inherit;
+}
+
+body.dark .preview-content .markdown-body {
+  color: var(--text-main-dark);
+}
+
+/* Garante contraste adequado - evita texto muito claro */
+.preview-content .markdown-body p,
+.preview-content .markdown-body li,
+.preview-content .markdown-body td {
+  color: var(--text-main-light);
+}
+
+body.dark .preview-content .markdown-body p,
+body.dark .preview-content .markdown-body li,
+body.dark .preview-content .markdown-body td {
+  color: var(--text-main-dark);
+}
+
+/* Garante que tabelas fiquem responsivas no modo escuro */
+body.dark .preview-content .markdown-body table {
+  border-color: var(--border-dark);
+}
+
+body.dark .preview-content .markdown-body table th {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--border-dark);
+}
+
+body.dark .preview-content .markdown-body table tr:nth-child(2n) {
+  background-color: rgba(255, 255, 255, 0.05);
 }
 
 body.dark .preview-content .mermaid:empty::before {

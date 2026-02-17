@@ -23,14 +23,15 @@ fi
 
 echo ">> Usando bucket do app: ${APP_BUCKET}"
 
-# Atualizar app.js com identity_pool_id e bucket do Terraform
+# Gerar config.json (identityPoolId, region, videoBucket) a partir do Terraform
 if [ -f "$UPDATE_APP_CONFIG" ]; then
   echo ">> Atualizando config do app (IdentityPoolId, bucket)..."
   bash "$UPDATE_APP_CONFIG" || true
 fi
 
 echo ">> Publicando app para s3://${APP_BUCKET}"
-aws s3 sync "${ROOT_DIR}/app" "s3://${APP_BUCKET}/" --delete --region "${REGION}"
+# Exclui config.json.example (template) - apenas config.json (gerado) deve ser publicado
+aws s3 sync "${ROOT_DIR}/app" "s3://${APP_BUCKET}/" --delete --exclude "config.json.example" --region "${REGION}"
 
 if [ -n "$CLOUDFRONT_DISTRIBUTION_ID" ] && [ "${SKIP_CLOUDFRONT_INVALIDATION}" != "1" ]; then
   echo ">> Invalidando cache do CloudFront (${CLOUDFRONT_DISTRIBUTION_ID})"

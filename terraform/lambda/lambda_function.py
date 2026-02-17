@@ -1,3 +1,4 @@
+import json
 import os
 import time
 import urllib.parse
@@ -9,10 +10,24 @@ transcribe_client = boto3.client("transcribe")
 OUTPUT_BUCKET = os.environ.get("TRANSCRIBE_OUTPUT_BUCKET")
 OUTPUT_PREFIX = os.environ.get("TRANSCRIBE_OUTPUT_PREFIX", "transcribe/")
 LANGUAGE_CODE = os.environ.get("TRANSCRIBE_LANGUAGE_CODE", "pt-BR")
+OBS_DEBUG = os.environ.get("OBSERVABILITY_DEBUG", "0") == "1"
+OBS_TRACE = os.environ.get("OBSERVABILITY_TRACE", "0") == "1"
+
+
+def _log(msg: str, always: bool = False):
+    """Log controlado por feature flags. always=True ignora flags."""
+    if always or OBS_TRACE or OBS_DEBUG:
+        print(msg)
 
 
 def lambda_handler(event, context):
-    print("Received event:", event)
+    if OBS_DEBUG:
+        print(f"[DEBUG] Evento recebido: {json.dumps(event, default=str)}")
+    elif OBS_TRACE:
+        detail = event.get("detail", {})
+        bucket = detail.get("bucket", {}).get("name", "?")
+        key = detail.get("object", {}).get("key", "?")
+        print(f"[TRACE] Evento: bucket={bucket} key={key}")
 
     detail = event.get("detail", {})
     bucket = detail.get("bucket", {}).get("name")
@@ -20,13 +35,13 @@ def lambda_handler(event, context):
     key    = obj.get("key")
 
     if not bucket or not key:
-        print("Evento sem bucket ou key")
+        _log("Evento sem bucket ou key", always=True)
         return {"status": "ignored"}
 
     key = urllib.parse.unquote_plus(key)
 
     if not key.lower().endswith(".mp4"):
-        print(f"Ignorando {key}, não é .mp4")
+        _log(f"Ignorando {key}, não é .mp4", always=True)
         return {"status": "ignored", "key": key}
 
     base_name = key.split("/")[-1].rsplit(".", 1)[0]
@@ -35,7 +50,7 @@ def lambda_handler(event, context):
 
     media_uri = f"s3://{bucket}/{key}"
 
-    print(f"Iniciando job {job_name} para {media_uri}")
+    _log(f"Iniciando job {job_name} para {media_uri}", always=True)
 
     resp = transcribe_client.start_transcription_job(
         TranscriptionJobName=job_name,
@@ -47,6 +62,10 @@ def lambda_handler(event, context):
         Subtitles={"Formats": ["srt"]},
     )
 
-    print("Resposta:", resp)
+    status = resp.get("TranscriptionJob", {}).get("TranscriptionJobStatus", "UNKNOWN")
+    _log(f"Job iniciado: status={status}", always=True)
+
+    if OBS_DEBUG:
+        print(f"[DEBUG] Resposta Transcribe: {json.dumps(resp, default=str)}")
 
     return {"status": "started", "job_name": job_name}

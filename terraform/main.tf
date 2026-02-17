@@ -1,6 +1,12 @@
 terraform {
   required_version = ">= 1.6.0"
 
+  backend "s3" {
+    bucket = "mramalho-tfvars"
+    key    = "meetup/terraform.tfstate"
+    region = "us-east-2"
+  }
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -74,17 +80,39 @@ resource "aws_s3_bucket" "cps" {
   }
 }
 
+resource "aws_s3_bucket_server_side_encryption_configuration" "cps_encryption" {
+  bucket = aws_s3_bucket.cps.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+    bucket_key_enabled = true
+  }
+}
+
 resource "aws_s3_bucket_cors_configuration" "cps_cors" {
   bucket = aws_s3_bucket.cps.id
 
   cors_rule {
     allowed_headers = ["*"]
     allowed_methods = ["GET", "PUT", "POST"]
-    # Em produção você pode restringir para apenas o domínio do CloudFront
-    allowed_origins = ["*"]
+    # Restrito ao domínio do app (evita requisições de origens não autorizadas)
+    allowed_origins = [
+      "https://${var.domain_name}",
+      "https://${aws_cloudfront_distribution.app_cdn.domain_name}"
+    ]
     expose_headers  = ["ETag"]
     max_age_seconds = 3000
   }
+}
+
+# OBRIGATÓRIO: S3 só envia eventos ao EventBridge quando esta notificação está habilitada.
+# Sem isso, as regras EventBridge nunca recebem eventos e as Lambdas não são disparadas.
+resource "aws_s3_bucket_notification" "cps_eventbridge" {
+  bucket = aws_s3_bucket.cps.id
+
+  eventbridge = true
 }
 
 ########################
@@ -246,6 +274,8 @@ resource "aws_lambda_function" "start_transcribe" {
       TRANSCRIBE_OUTPUT_BUCKET = aws_s3_bucket.cps.bucket
       TRANSCRIBE_OUTPUT_PREFIX = "transcribe/"
       TRANSCRIBE_LANGUAGE_CODE = "pt-BR"
+      OBSERVABILITY_DEBUG     = var.observability_debug
+      OBSERVABILITY_TRACE     = var.observability_trace
     }
   }
 }
@@ -328,6 +358,8 @@ resource "aws_lambda_function" "bedrock_summary" {
       BEDROCK_MODEL_ID          = var.bedrock_model_id
       BEDROCK_REGION            = var.bedrock_region
       BEDROCK_INFERENCE_PROFILE = var.bedrock_inference_profile
+      OBSERVABILITY_DEBUG      = var.observability_debug
+      OBSERVABILITY_TRACE      = var.observability_trace
     }
   }
 }
@@ -410,6 +442,34 @@ resource "aws_lambda_permission" "allow_eventbridge_invoke_bedrock_summary" {
 # CLOUDFRONT + ROUTE53
 ########################
 
+resource "aws_cloudfront_response_headers_policy" "security_headers" {
+  name = "security-headers-meetup"
+
+  security_headers_config {
+    strict_transport_security {
+      access_control_max_age_sec = 31536000
+      include_subdomains           = true
+      override                    = true
+    }
+    content_type_options {
+      override = true
+    }
+    frame_options {
+      frame_option = "DENY"
+      override     = true
+    }
+    xss_protection {
+      mode_block = true
+      protection = true
+      override  = true
+    }
+    referrer_policy {
+      referrer_policy = "strict-origin-when-cross-origin"
+      override       = true
+    }
+  }
+}
+
 resource "aws_cloudfront_distribution" "app_cdn" {
   enabled             = true
   default_root_object = "index.html"
@@ -435,6 +495,8 @@ resource "aws_cloudfront_distribution" "app_cdn" {
     allowed_methods = ["GET", "HEAD"]
     cached_methods  = ["GET", "HEAD"]
     compress        = true
+
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.security_headers.id
 
     forwarded_values {
       query_string = false

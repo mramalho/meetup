@@ -95,6 +95,11 @@ Entregar, quando aplicável:
 4) **Ações/Próximos passos** (somente se o vídeo mencionar)  
 5) **Perguntas em aberto** (somente se derivarem do conteúdo)
 
+**Formatação Markdown**:
+- Entregue o resumo em **Markdown puro**, sem envolver em blocos de código (```). O conteúdo será renderizado diretamente.
+- Use **tabelas** quando fizer sentido (ex.: comparações, listas de itens com atributos). Sintaxe: | Col1 | Col2 | na primeira linha, |---| na segunda, | val1 | val2 | nas demais.
+- Use listas, cabeçalhos (##, ###) e blocos de citação (>) para estruturação visual.
+
 ## 4.3 Evidências e ancoragem
 
 - Quando o pipeline suportar, incluir **referências de trecho** (ex.: timestamps ou IDs de segmento) para itens críticos.

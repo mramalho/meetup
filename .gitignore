@@ -55,6 +55,13 @@ logs/
 *.backup
 app/app.js.backup
 
+# Scripts - config e state local
+script/config.env
+script/.create-all-state
+
+# App - config gerado no deploy (contém identityPoolId, bucket)
+app/config.json
+
 # OS
 .DS_Store
 .DS_Store?

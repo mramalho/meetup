@@ -1,13 +1,11 @@
-AWS.config.update({
-  region: "us-east-2",
-  credentials: new AWS.CognitoIdentityCredentials({
-    IdentityPoolId: "us-east-2:d179bf95-6b80-44d8-bece-bb26bb6d1bb2"
-  })
-});
+/**
+ * Config carregada em runtime de config.json (gerado no deploy).
+ * Nenhum dado sensível deve ficar hardcoded no código-fonte.
+ */
+let config = { identityPoolId: "", region: "us-east-2", videoBucket: "" };
+let s3 = null;
 
-const s3 = new AWS.S3();
-
-// Inicializar Mermaid
+// Inicializar Mermaid (securityLevel: 'loose' necessário para diagramas; HTML é sanitizado com DOMPurify)
 if (typeof mermaid !== 'undefined') {
   mermaid.initialize({
     startOnLoad: false,
@@ -29,7 +27,6 @@ if (typeof mermaid !== 'undefined') {
   });
 }
 
-const videoBucket = "aws-community-cps";
 const videoPrefix = "video/";
 const promptPrefix = "prompts/";
 const modelPrefix = "models/";
@@ -80,7 +77,7 @@ async function loadModels() {
       modelSelect.value = availableModels[0].id;
     }
     
-    console.log(`✅ ${availableModels.length} modelos carregados com sucesso`);
+    // Modelos carregados (evitar console.log em produção - pode expor estrutura)
   } catch (err) {
     console.error("Erro ao carregar modelos:", err);
     modelSelect.innerHTML = '<option value="">Erro ao carregar modelos</option>';
@@ -100,11 +97,42 @@ async function loadModels() {
   }
 }
 
-// Carregar modelos ao iniciar
-loadModels();
+async function init() {
+  try {
+    const res = await fetch("config.json");
+    if (!res.ok) throw new Error(`config.json não encontrado (${res.status})`);
+    const loaded = await res.json();
+    if (!loaded.identityPoolId || !loaded.videoBucket) {
+      throw new Error("config.json incompleto: identityPoolId e videoBucket são obrigatórios");
+    }
+    config = { ...config, ...loaded };
+  } catch (err) {
+    console.error("Erro ao carregar config:", err);
+    const container = document.querySelector(".container");
+    if (container) {
+      container.innerHTML = `
+        <div style="padding: 2rem; text-align: center; max-width: 500px; margin: 2rem auto;">
+          <h2>⚠️ Configuração necessária</h2>
+          <p>O arquivo <code>config.json</code> não foi encontrado ou está incompleto.</p>
+          <p>Execute o deploy (<code>bash script/deploy_app.sh</code>) para gerar o config.json a partir dos outputs do Terraform.</p>
+          <p style="color: #666; font-size: 0.9rem;">Para desenvolvimento local, crie <code>app/config.json</code> com identityPoolId, region e videoBucket.</p>
+        </div>`;
+    }
+    return;
+  }
 
-// Dark mode
-darkModeToggle.addEventListener("click", () => {
+  AWS.config.update({
+    region: config.region,
+    credentials: new AWS.CognitoIdentityCredentials({
+      IdentityPoolId: config.identityPoolId
+    })
+  });
+  s3 = new AWS.S3();
+
+  await loadModels();
+
+  // Dark mode
+  darkModeToggle.addEventListener("click", () => {
   const body = document.body;
   const dark = body.classList.contains("dark");
   body.classList.toggle("dark", !dark);
@@ -154,6 +182,13 @@ uploadBtn.addEventListener("click", async () => {
     return;
   }
 
+  // Limite de tamanho: 2000MB (evitar abuso de storage)
+  const MAX_SIZE_MB = 2000;
+  if (videoFile.size > MAX_SIZE_MB * 1024 * 1024) {
+    alert(`O arquivo excede o limite de ${MAX_SIZE_MB}MB.`);
+    return;
+  }
+
   // Validar arquivo de prompt se fornecido
   if (promptFile) {
     const validExtensions = [".txt", ".md"];
@@ -176,7 +211,7 @@ uploadBtn.addEventListener("click", async () => {
     
     // Upload do vídeo
     const videoParams = {
-      Bucket: videoBucket,
+      Bucket: config.videoBucket,
       Key: videoPrefix + videoFile.name,
       Body: videoFile,
       ContentType: "video/mp4"
@@ -191,7 +226,7 @@ uploadBtn.addEventListener("click", async () => {
       const promptKey = promptPrefix + baseName + ".txt";
       
       const promptParams = {
-        Bucket: videoBucket,
+        Bucket: config.videoBucket,
         Key: promptKey,
         Body: promptFile,
         ContentType: "text/plain"
@@ -203,7 +238,7 @@ uploadBtn.addEventListener("click", async () => {
     // Upload do modelo selecionado
     const modelKey = modelPrefix + baseName + ".txt";
     const modelParams = {
-      Bucket: videoBucket,
+      Bucket: config.videoBucket,
       Key: modelKey,
       Body: selectedModel,
       ContentType: "text/plain"
@@ -247,7 +282,7 @@ uploadBtn.addEventListener("click", async () => {
 });
 
 async function loadSRTFiles() {
-  const params = { Bucket: videoBucket, Prefix: srtPrefix };
+  const params = { Bucket: config.videoBucket, Prefix: srtPrefix };
   const result = await s3.listObjectsV2(params).promise();
 
   srtListDiv.innerHTML = "";
@@ -260,7 +295,7 @@ async function loadSRTFiles() {
     el.textContent = obj.Key.split("/").pop();
 
     el.onclick = () => {
-      selectItem(el, { key: obj.Key, bucket: videoBucket, type: "srt" });
+      selectItem(el, { key: obj.Key, bucket: config.videoBucket, type: "srt" });
       loadFilePreview(obj.Key, "srt");
     };
 
@@ -269,7 +304,7 @@ async function loadSRTFiles() {
 }
 
 async function loadMDFiles() {
-  const params = { Bucket: videoBucket, Prefix: mdPrefix };
+  const params = { Bucket: config.videoBucket, Prefix: mdPrefix };
   const result = await s3.listObjectsV2(params).promise();
 
   mdListDiv.innerHTML = "";
@@ -282,7 +317,7 @@ async function loadMDFiles() {
     el.textContent = obj.Key.split("/").pop();
 
     el.onclick = () => {
-      selectItem(el, { key: obj.Key, bucket: videoBucket, type: "md" });
+      selectItem(el, { key: obj.Key, bucket: config.videoBucket, type: "md" });
       loadFilePreview(obj.Key, "md");
     };
 
@@ -302,12 +337,19 @@ async function loadFilePreview(key, type) {
   previewContent.innerHTML = "<p>Carregando...</p>";
 
   try {
-    const data = await s3.getObject({ Bucket: videoBucket, Key: key }).promise();
+    const data = await s3.getObject({ Bucket: config.videoBucket, Key: key }).promise();
     const text = new TextDecoder("utf-8").decode(data.Body);
 
     if (type === "md") {
+      // Remover wrapper ```markdown ... ``` se o Bedrock retornou o resumo dentro de code block
+      let processedText = text.trim();
+      const markdownWrapperRegex = /^```(?:markdown|md)?\s*\n?([\s\S]*?)```\s*$/;
+      const wrapperMatch = processedText.match(markdownWrapperRegex);
+      if (wrapperMatch) {
+        processedText = wrapperMatch[1].trim();
+      }
+
       // Processar blocos Mermaid antes do Markdown
-      let processedText = text;
       const mermaidBlocks = [];
       // Regex melhorado para capturar blocos Mermaid (com ou sem quebra de linha após mermaid)
       const mermaidRegex = /```mermaid\s*\n?([\s\S]*?)```/g;
@@ -315,7 +357,7 @@ async function loadFilePreview(key, type) {
       let mermaidIndex = 0;
       
       // Extrair blocos Mermaid e substituir por placeholders
-      while ((match = mermaidRegex.exec(text)) !== null) {
+      while ((match = mermaidRegex.exec(processedText)) !== null) {
         const mermaidCode = match[1].trim();
         const placeholder = `\n\nMERMAID_PLACEHOLDER_${mermaidIndex}\n\n`;
         mermaidBlocks.push(mermaidCode);
@@ -362,7 +404,8 @@ async function loadFilePreview(key, type) {
         KEEP_CONTENT: true
       });
       
-      previewContent.innerHTML = cleanHtml;
+      // Wrapper markdown-body para exibição WYSIWYG (GitHub Markdown CSS)
+      previewContent.innerHTML = `<div class="markdown-body">${cleanHtml}</div>`;
       
       // Renderizar diagramas Mermaid
       if (typeof mermaid !== 'undefined' && mermaidBlocks.length > 0) {
@@ -478,7 +521,10 @@ async function loadAllLists() {
   await Promise.all([loadSRTFiles(), loadMDFiles()]);
 }
 
-refreshBtn.addEventListener("click", loadAllLists);
+  refreshBtn.addEventListener("click", loadAllLists);
 
-loadAllLists();
-setInterval(loadAllLists, 60000);
+  await loadAllLists();
+  setInterval(loadAllLists, 60000);
+}
+
+init();

@@ -1,3 +1,4 @@
+import json
 import os
 import urllib.parse
 
@@ -5,6 +6,9 @@ import boto3
 from botocore.exceptions import ClientError
 
 s3_client = boto3.client("s3")
+OBS_DEBUG = os.environ.get("OBSERVABILITY_DEBUG", "0") == "1"
+OBS_TRACE = os.environ.get("OBSERVABILITY_TRACE", "0") == "1"
+
 bedrock_client = boto3.client(
     "bedrock-runtime",
     region_name=os.environ.get("BEDROCK_REGION", "us-east-2"),
@@ -22,6 +26,12 @@ INFERENCE_PROFILE = inference_profile_raw if inference_profile_raw and inference
 DEFAULT_PROMPT_FILENAME = "guardrails.md"
 
 
+def _log(msg: str, always: bool = False):
+    """Log controlado por feature flags. always=True ignora flags."""
+    if always or OBS_TRACE or OBS_DEBUG:
+        print(msg)
+
+
 def _load_default_system_prompt() -> str:
     """Carrega o prompt padrão do arquivo guardrails.md empacotado na Lambda."""
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), DEFAULT_PROMPT_FILENAME)
@@ -29,14 +39,15 @@ def _load_default_system_prompt() -> str:
         with open(path, "r", encoding="utf-8") as f:
             text = f.read().strip()
         if text:
-            print(f"Prompt padrão carregado de {DEFAULT_PROMPT_FILENAME} ({len(text)} caracteres)")
+            _log(f"Prompt padrão carregado de {DEFAULT_PROMPT_FILENAME} ({len(text)} caracteres)")
             return text
     except OSError as e:
-        print(f"Arquivo guardrails.md não encontrado ou erro ao ler: {e}")
+        _log(f"Arquivo guardrails.md não encontrado ou erro ao ler: {e}", always=True)
     return (
         "Você é um assistente especializado em resumir conteúdos de palestras, "
         "aulas e vídeos técnicos. Gere um resumo detalhado em português, em formato "
-        "Markdown, com seções, tópicos e, se fizer sentido, bullets e subtítulos.\n\n"
+        "Markdown, com seções, tópicos, bullets e subtítulos.\n\n"
+        "Use tabelas Markdown quando fizer sentido (ex.: comparações, listas com atributos).\n\n"
         "Regras:\n"
         "- Não invente conteúdo que não esteja na transcrição.\n"
         "- Mantenha o foco nas ideias principais, exemplos importantes e conclusões.\n"
@@ -109,20 +120,20 @@ def get_system_prompt(base_name: str, bucket: str) -> str:
 
     prompt_key = f"prompts/{base_name}.txt"
     try:
-        print(f"Tentando ler prompt personalizado de s3://{bucket}/{prompt_key}")
+        _log(f"Tentando ler prompt personalizado de s3://{bucket}/{prompt_key}")
         response = s3_client.get_object(Bucket=bucket, Key=prompt_key)
         custom_text = response["Body"].read().decode("utf-8", errors="ignore").strip()
         if custom_text:
-            print(f"Prompt personalizado encontrado ({len(custom_text)} caracteres). Usando guardrails + prompt personalizado.")
+            _log(f"Prompt personalizado encontrado ({len(custom_text)} caracteres). Usando guardrails + prompt personalizado.")
             return _combine_prompts(guardrails, custom_text)
     except ClientError as e:
         error_code = e.response.get("Error", {}).get("Code", "")
         if error_code == "NoSuchKey":
-            print(f"Prompt personalizado não encontrado em {prompt_key}, usando apenas guardrails (guardrails.md)")
+            _log(f"Prompt personalizado não encontrado em {prompt_key}, usando apenas guardrails (guardrails.md)")
         elif error_code == "AccessDenied":
-            print(f"Sem permissão para ler {prompt_key}, usando apenas guardrails (guardrails.md)")
+            _log(f"Sem permissão para ler {prompt_key}, usando apenas guardrails (guardrails.md)", always=True)
         else:
-            print(f"Erro ao ler prompt personalizado: {e}, usando apenas guardrails (guardrails.md)")
+            _log(f"Erro ao ler prompt personalizado: {e}, usando apenas guardrails (guardrails.md)", always=True)
 
     return guardrails
 
@@ -145,19 +156,19 @@ def get_selected_model(base_name: str, bucket: str) -> str:
     model_key = f"models/{base_name}.txt"
     
     try:
-        print(f"Tentando ler modelo selecionado de s3://{bucket}/{model_key}")
+        _log(f"Tentando ler modelo selecionado de s3://{bucket}/{model_key}")
         response = s3_client.get_object(Bucket=bucket, Key=model_key)
         model_id = response["Body"].read().decode("utf-8", errors="ignore").strip()
-        print(f"Modelo selecionado encontrado: {model_id}")
+        _log(f"Modelo selecionado encontrado: {model_id}")
         return model_id
     except ClientError as e:
         error_code = e.response.get("Error", {}).get("Code", "")
         if error_code == "NoSuchKey":
-            print(f"Modelo selecionado não encontrado em {model_key}, usando modelo padrão: {MODEL_ID}")
+            _log(f"Modelo selecionado não encontrado em {model_key}, usando modelo padrão: {MODEL_ID}")
         elif error_code == "AccessDenied":
-            print(f"Sem permissão para ler {model_key}, usando modelo padrão: {MODEL_ID}")
+            _log(f"Sem permissão para ler {model_key}, usando modelo padrão: {MODEL_ID}", always=True)
         else:
-            print(f"Erro ao ler modelo selecionado: {e}, usando modelo padrão: {MODEL_ID}")
+            _log(f"Erro ao ler modelo selecionado: {e}, usando modelo padrão: {MODEL_ID}", always=True)
     
     return MODEL_ID
 
@@ -180,6 +191,8 @@ def call_bedrock_nova(transcript_text: str, system_prompt: str, model_id: str, i
     user_message = (
         "Abaixo está a transcrição (já limpa) de um vídeo. "
         "Gere um resumo detalhado em Markdown, conforme as regras.\n\n"
+        "IMPORTANTE: Entregue o resumo em Markdown puro, sem envolver em blocos de código (```). "
+        "O conteúdo será renderizado diretamente - use tabelas, listas e cabeçalhos normalmente.\n\n"
         "=== TRANSCRIÇÃO INÍCIO ===\n"
         f"{transcript_text}\n"
         "=== TRANSCRIÇÃO FIM ==="
@@ -191,7 +204,7 @@ def call_bedrock_nova(transcript_text: str, system_prompt: str, model_id: str, i
         # Caso contrário, use o model_id diretamente
         model_id_to_use = inference_profile if inference_profile else model_id
         
-        print(f"Usando modelo: {model_id_to_use} (model_id={model_id}, inference_profile={inference_profile})")
+        _log(f"Usando modelo: {model_id_to_use} (model_id={model_id}, inference_profile={inference_profile})")
         
         response = bedrock_client.converse(
             modelId=model_id_to_use,
@@ -217,12 +230,18 @@ def call_bedrock_nova(transcript_text: str, system_prompt: str, model_id: str, i
 
         raise RuntimeError("Resposta do modelo não contém texto.")
     except ClientError as e:
-        print(f"Erro ao chamar Bedrock: {e}")
+        _log(f"Erro ao chamar Bedrock: {e}", always=True)
         raise
 
 
 def lambda_handler(event, context):
-    print("Received event:", event)
+    if OBS_DEBUG:
+        print(f"[DEBUG] Evento recebido: {json.dumps(event, default=str)}")
+    elif OBS_TRACE:
+        detail = event.get("detail", {})
+        bucket = detail.get("bucket", {}).get("name", "?")
+        key = detail.get("object", {}).get("key", "?")
+        print(f"[TRACE] Evento: bucket={bucket} key={key}")
 
     detail = event.get("detail", {})
     bucket = detail.get("bucket", {}).get("name")
@@ -230,38 +249,38 @@ def lambda_handler(event, context):
     key = obj.get("key")
 
     if not bucket or not key:
-        print("Evento sem bucket ou key. Nada a fazer.")
+        _log("Evento sem bucket ou key. Nada a fazer.", always=True)
         return {"status": "ignored"}
 
     key = urllib.parse.unquote_plus(key)
 
     # Só processa arquivos .srt
     if not key.lower().endswith(".srt"):
-        print(f"Ignorando objeto {key}, não é .srt.")
+        _log(f"Ignorando objeto {key}, não é .srt.", always=True)
         return {"status": "ignored", "key": key}
 
-    print(f"Lendo arquivo SRT s3://{bucket}/{key}")
+    _log(f"Lendo arquivo SRT s3://{bucket}/{key}", always=True)
 
     try:
         s3_response = s3_client.get_object(Bucket=bucket, Key=key)
         srt_bytes = s3_response["Body"].read()
         srt_text = srt_bytes.decode("utf-8", errors="ignore")
     except ClientError as e:
-        print(f"Erro ao ler SRT do S3: {e}")
+        _log(f"Erro ao ler SRT do S3: {e}", always=True)
         raise
 
     plain_text = extract_plain_text_from_srt(srt_text)
-    print(f"Tamanho do texto extraído: {len(plain_text)} caracteres")
+    _log(f"Tamanho do texto extraído: {len(plain_text)} caracteres")
 
     if not plain_text.strip():
-        print("Transcrição vazia após limpeza. Nada a fazer.")
+        _log("Transcrição vazia após limpeza. Nada a fazer.", always=True)
         return {"status": "empty_transcript"}
 
     # Obtém o prompt (personalizado ou padrão)
     # Extrai o nome base do arquivo .srt (removendo prefixo e timestamp)
     srt_filename = key.split("/")[-1]
     video_base_name = extract_video_base_name(srt_filename)
-    print(f"Nome base do vídeo extraído: {video_base_name} (de {srt_filename})")
+    _log(f"Nome base do vídeo extraído: {video_base_name} (de {srt_filename})")
     system_prompt = get_system_prompt(video_base_name, bucket)
     
     # Obtém o modelo selecionado (ou usa o padrão)
@@ -274,7 +293,7 @@ def lambda_handler(event, context):
     srt_base_name = key.split("/")[-1].rsplit(".", 1)[0]
     output_key = f"{OUTPUT_PREFIX}{srt_base_name}.md"
 
-    print(f"Gravando resumo em s3://{OUTPUT_BUCKET}/{output_key}")
+    _log(f"Gravando resumo em s3://{OUTPUT_BUCKET}/{output_key}", always=True)
 
     try:
         s3_client.put_object(
@@ -284,7 +303,7 @@ def lambda_handler(event, context):
             ContentType="text/markdown",
         )
     except ClientError as e:
-        print(f"Erro ao gravar resumo no S3: {e}")
+        _log(f"Erro ao gravar resumo no S3: {e}", always=True)
         raise
 
     return {
