@@ -7,7 +7,7 @@ UPDATE_APP_CONFIG="${ROOT_DIR}/script/update_app_config.sh"
 
 # Obter do Terraform (exige terraform apply já executado)
 cd "${TF_DIR}"
-APP_BUCKET=$(terraform output -raw app_bucket_name 2>/dev/null || echo "aws-community-app")
+BUCKET_NAME=$(terraform output -raw bucket_name 2>/dev/null || echo "meetup-bosch")
 CLOUDFRONT_DISTRIBUTION_ID=$(terraform output -raw cloudfront_distribution_id 2>/dev/null || echo "")
 cd "${ROOT_DIR}"
 
@@ -21,17 +21,21 @@ if [ -z "$CLOUDFRONT_DISTRIBUTION_ID" ]; then
   fi
 fi
 
-echo ">> Usando bucket do app: ${APP_BUCKET}"
+echo ">> Usando bucket: ${BUCKET_NAME} (prefixo app/)"
 
-# Gerar config.json (identityPoolId, region, videoBucket) a partir do Terraform
+# Gerar config/config.json (identityPoolId, region, videoBucket) a partir do Terraform
 if [ -f "$UPDATE_APP_CONFIG" ]; then
   echo ">> Atualizando config do app (IdentityPoolId, bucket)..."
   bash "$UPDATE_APP_CONFIG" || true
 fi
 
-echo ">> Publicando app para s3://${APP_BUCKET}"
-# Exclui config.json.example (template) - apenas config.json (gerado) deve ser publicado
-aws s3 sync "${ROOT_DIR}/app" "s3://${APP_BUCKET}/" --delete --exclude "config.json.example" --region "${REGION}"
+# Copiar config.json para app/ (o app carrega config.json em runtime do mesmo diretório)
+if [ -f "${ROOT_DIR}/config/config.json" ]; then
+  cp "${ROOT_DIR}/config/config.json" "${ROOT_DIR}/app/config.json"
+fi
+
+echo ">> Publicando app para s3://${BUCKET_NAME}/app/"
+aws s3 sync "${ROOT_DIR}/app" "s3://${BUCKET_NAME}/app/" --delete --exclude "config.json.example" --region "${REGION}"
 
 if [ -n "$CLOUDFRONT_DISTRIBUTION_ID" ] && [ "${SKIP_CLOUDFRONT_INVALIDATION}" != "1" ]; then
   echo ">> Invalidando cache do CloudFront (${CLOUDFRONT_DISTRIBUTION_ID})"

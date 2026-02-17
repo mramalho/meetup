@@ -4,16 +4,10 @@ variable "aws_region" {
   default     = "us-east-2"
 }
 
-variable "app_bucket_name" {
-  description = "Bucket S3 para hospedar o app estático"
+variable "bucket_name" {
+  description = "Bucket S3 único (meetup-bosch) - app em app/, dados em model/"
   type        = string
-  default     = "aws-community-app"
-}
-
-variable "cps_bucket_name" {
-  description = "Bucket S3 para vídeos/transcrições/resumos"
-  type        = string
-  default     = "aws-community-cps"
+  default     = "meetup-bosch"
 }
 
 variable "domain_name" {
@@ -48,6 +42,12 @@ variable "bedrock_model_id" {
 
 variable "bedrock_inference_profile" {
   description = "ID do inference profile do Bedrock (necessário para alguns modelos como deepseek.r1-v1:0). Use 'us.deepseek.r1-v1:0' para DeepSeek R1. Deixe vazio ('') para modelos que não requerem inference profile."
+  type        = string
+  default     = ""
+}
+
+variable "bedrock_logs_bucket_name" {
+  description = "Nome do bucket S3 para logs de invocação do Bedrock (análises posteriores, auditoria). Deve ser único globalmente e estar na mesma região do Bedrock."
   type        = string
   default     = ""
 }

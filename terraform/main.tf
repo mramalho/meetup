@@ -2,8 +2,8 @@ terraform {
   required_version = ">= 1.6.0"
 
   backend "s3" {
-    bucket = "mramalho-tfvars"
-    key    = "meetup/terraform.tfstate"
+    bucket = "meetup-bosch"
+    key    = "tfvars/meetup/terraform.tfstate"
     region = "us-east-2"
   }
 
@@ -19,69 +19,24 @@ provider "aws" {
   region = var.aws_region
 }
 
-########################
-# S3 - APP (SITE)
-########################
-
-resource "aws_s3_bucket" "app" {
-  bucket = var.app_bucket_name
-
-  # Permite deletar o bucket mesmo com objetos (útil para terraform destroy)
-  force_destroy = true
-
-  tags = {
-    Name = var.app_bucket_name
-  }
+# Provider para recursos do Bedrock (logging) - deve estar na mesma região das invocações
+provider "aws" {
+  alias  = "bedrock"
+  region = var.bedrock_region
 }
 
-resource "aws_s3_bucket_website_configuration" "app_website" {
-  bucket = aws_s3_bucket.app.id
-
-  index_document {
-    suffix = "index.html"
-  }
-
-  error_document {
-    key = "error.html"
-  }
-}
-
-resource "aws_s3_bucket_policy" "app_policy" {
-  bucket     = aws_s3_bucket.app.id
-  depends_on = [aws_s3_bucket_public_access_block.app_public_access]
-
-  policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [
-      {
-        Sid       = "PublicReadForWebsite",
-        Effect    = "Allow",
-        Principal = "*",
-        Action    = ["s3:GetObject"],
-        Resource  = "${aws_s3_bucket.app.arn}/*"
-      }
-    ]
-  })
-}
-
-
 ########################
-# S3 - BUCKET CPS (Vídeos/Transcrições/Resumos)
+# S3 - BUCKET ÚNICO (meetup-bosch)
+# Prefixos: app/ (frontend), model/ (vídeos, transcrições, resumos, prompts, models)
+# O bucket é criado por setup-terraform-backend.sh antes do terraform init.
 ########################
 
-resource "aws_s3_bucket" "cps" {
-  bucket = var.cps_bucket_name
-
-  # Permite deletar o bucket mesmo com objetos (útil para terraform destroy)
-  force_destroy = true
-
-  tags = {
-    Name = var.cps_bucket_name
-  }
+data "aws_s3_bucket" "main" {
+  bucket = var.bucket_name
 }
 
-resource "aws_s3_bucket_server_side_encryption_configuration" "cps_encryption" {
-  bucket = aws_s3_bucket.cps.id
+resource "aws_s3_bucket_server_side_encryption_configuration" "main_encryption" {
+  bucket = data.aws_s3_bucket.main.id
 
   rule {
     apply_server_side_encryption_by_default {
@@ -91,13 +46,21 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "cps_encryption" {
   }
 }
 
-resource "aws_s3_bucket_cors_configuration" "cps_cors" {
-  bucket = aws_s3_bucket.cps.id
+resource "aws_s3_bucket_public_access_block" "main_public_access" {
+  bucket = data.aws_s3_bucket.main.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_cors_configuration" "main_cors" {
+  bucket = data.aws_s3_bucket.main.id
 
   cors_rule {
     allowed_headers = ["*"]
-    allowed_methods = ["GET", "PUT", "POST"]
-    # Restrito ao domínio do app (evita requisições de origens não autorizadas)
+    allowed_methods = ["GET", "PUT", "POST", "DELETE"]
     allowed_origins = [
       "https://${var.domain_name}",
       "https://${aws_cloudfront_distribution.app_cdn.domain_name}"
@@ -108,9 +71,8 @@ resource "aws_s3_bucket_cors_configuration" "cps_cors" {
 }
 
 # OBRIGATÓRIO: S3 só envia eventos ao EventBridge quando esta notificação está habilitada.
-# Sem isso, as regras EventBridge nunca recebem eventos e as Lambdas não são disparadas.
-resource "aws_s3_bucket_notification" "cps_eventbridge" {
-  bucket = aws_s3_bucket.cps.id
+resource "aws_s3_bucket_notification" "main_eventbridge" {
+  bucket = data.aws_s3_bucket.main.id
 
   eventbridge = true
 }
@@ -155,36 +117,35 @@ resource "aws_iam_role_policy" "cognito_unauth_s3_policy" {
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [
-      # Listar objetos nos prefixos usados
       {
         Effect   = "Allow",
         Action   = ["s3:ListBucket"],
-        Resource = aws_s3_bucket.cps.arn,
+        Resource = data.aws_s3_bucket.main.arn,
         Condition = {
           StringLike = {
             "s3:prefix" = [
-              "video/*",
-              "transcribe/*",
-              "resumo/*",
-              "prompts/*",
-              "models/*"
+              "model/video/*",
+              "model/transcribe/*",
+              "model/resumo/*",
+              "model/prompts/*",
+              "model/models/*"
             ]
           }
         }
       },
-      # Upload de vídeos e leitura de transcrições/resumos
       {
         Effect = "Allow",
         Action = [
           "s3:PutObject",
-          "s3:GetObject"
+          "s3:GetObject",
+          "s3:DeleteObject"
         ],
         Resource = [
-          "${aws_s3_bucket.cps.arn}/video/*",
-          "${aws_s3_bucket.cps.arn}/transcribe/*",
-          "${aws_s3_bucket.cps.arn}/resumo/*",
-          "${aws_s3_bucket.cps.arn}/prompts/*",
-          "${aws_s3_bucket.cps.arn}/models/*"
+          "${data.aws_s3_bucket.main.arn}/model/video/*",
+          "${data.aws_s3_bucket.main.arn}/model/transcribe/*",
+          "${data.aws_s3_bucket.main.arn}/model/resumo/*",
+          "${data.aws_s3_bucket.main.arn}/model/prompts/*",
+          "${data.aws_s3_bucket.main.arn}/model/models/*"
         ]
       }
     ]
@@ -237,13 +198,12 @@ resource "aws_iam_role_policy" "lambda_transcribe_policy" {
       {
         Effect   = "Allow",
         Action   = ["s3:GetObject"],
-        Resource = "${aws_s3_bucket.cps.arn}/video/*"
+        Resource = "${data.aws_s3_bucket.main.arn}/model/video/*"
       },
-      # opcional, se a Lambda precisar escrever algo
       {
         Effect   = "Allow",
         Action   = ["s3:PutObject"],
-        Resource = "${aws_s3_bucket.cps.arn}/transcribe/*"
+        Resource = "${data.aws_s3_bucket.main.arn}/model/transcribe/*"
       },
       {
         Effect = "Allow",
@@ -271,8 +231,8 @@ resource "aws_lambda_function" "start_transcribe" {
 
   environment {
     variables = {
-      TRANSCRIBE_OUTPUT_BUCKET = aws_s3_bucket.cps.bucket
-      TRANSCRIBE_OUTPUT_PREFIX = "transcribe/"
+      TRANSCRIBE_OUTPUT_BUCKET = data.aws_s3_bucket.main.bucket
+      TRANSCRIBE_OUTPUT_PREFIX = "model/transcribe/"
       TRANSCRIBE_LANGUAGE_CODE = "pt-BR"
       OBSERVABILITY_DEBUG     = var.observability_debug
       OBSERVABILITY_TRACE     = var.observability_trace
@@ -307,15 +267,21 @@ resource "aws_iam_role_policy" "lambda_bedrock_summary_policy" {
         Effect = "Allow",
         Action = ["s3:GetObject"],
         Resource = [
-          "${aws_s3_bucket.cps.arn}/transcribe/*",
-          "${aws_s3_bucket.cps.arn}/prompts/*",
-          "${aws_s3_bucket.cps.arn}/models/*"
+          "${data.aws_s3_bucket.main.arn}/model/transcribe/*",
+          "${data.aws_s3_bucket.main.arn}/model/prompts/*",
+          "${data.aws_s3_bucket.main.arn}/model/models/*"
         ]
       },
       {
         Effect   = "Allow",
         Action   = ["s3:PutObject"],
-        Resource = "${aws_s3_bucket.cps.arn}/resumo/*"
+        Resource = "${data.aws_s3_bucket.main.arn}/model/resumo/*"
+      },
+      # Permite atualizar .srt com cabeçalho do modelo LLM
+      {
+        Effect   = "Allow",
+        Action   = ["s3:PutObject"],
+        Resource = "${data.aws_s3_bucket.main.arn}/model/transcribe/*"
       },
       {
         Effect = "Allow",
@@ -353,8 +319,9 @@ resource "aws_lambda_function" "bedrock_summary" {
 
   environment {
     variables = {
-      SUMMARY_OUTPUT_BUCKET     = aws_s3_bucket.cps.bucket
-      SUMMARY_OUTPUT_PREFIX     = "resumo/"
+      SUMMARY_OUTPUT_BUCKET     = data.aws_s3_bucket.main.bucket
+      SUMMARY_OUTPUT_PREFIX     = "model/resumo/"
+      MODEL_PREFIX              = "model/"
       BEDROCK_MODEL_ID          = var.bedrock_model_id
       BEDROCK_REGION            = var.bedrock_region
       BEDROCK_INFERENCE_PROFILE = var.bedrock_inference_profile
@@ -378,11 +345,11 @@ resource "aws_cloudwatch_event_rule" "s3_video_upload" {
     "detail-type" : ["Object Created"],
       "detail" : {
         "bucket" : {
-          "name" : [aws_s3_bucket.cps.bucket]
+          "name" : [data.aws_s3_bucket.main.bucket]
         },
       "object" : {
         "key" : [{
-          "prefix" : "video/"
+          "prefix" : "model/video/"
         }]
       }
     }
@@ -413,11 +380,11 @@ resource "aws_cloudwatch_event_rule" "s3_srt_created" {
     "detail-type" : ["Object Created"],
       "detail" : {
         "bucket" : {
-          "name" : [aws_s3_bucket.cps.bucket]
+          "name" : [data.aws_s3_bucket.main.bucket]
         },
       "object" : {
         "key" : [{
-          "prefix" : "transcribe/"
+          "prefix" : "model/transcribe/"
         }]
       }
     }
@@ -439,8 +406,144 @@ resource "aws_lambda_permission" "allow_eventbridge_invoke_bedrock_summary" {
 }
 
 ########################
+# BEDROCK MODEL INVOCATION LOGGING (análises posteriores, auditoria)
+# Logs de prompts/respostas enviados para S3 para compliance e debugging
+########################
+
+locals {
+  bedrock_logs_bucket = coalesce(var.bedrock_logs_bucket_name, "${var.bucket_name}-bedrock-logs")
+}
+
+resource "aws_s3_bucket" "bedrock_logs" {
+  provider = aws.bedrock
+
+  bucket        = local.bedrock_logs_bucket
+  force_destroy = true # Permite terraform destroy mesmo com objetos (logs do Bedrock)
+}
+
+resource "aws_s3_bucket_ownership_controls" "bedrock_logs" {
+  provider = aws.bedrock
+
+  bucket = aws_s3_bucket.bedrock_logs.id
+
+  rule {
+    object_ownership = "BucketOwnerEnforced"
+  }
+
+  depends_on = [aws_s3_bucket.bedrock_logs]
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "bedrock_logs" {
+  provider = aws.bedrock
+
+  bucket = aws_s3_bucket.bedrock_logs.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+    bucket_key_enabled = true
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "bedrock_logs" {
+  provider = aws.bedrock
+
+  bucket = aws_s3_bucket.bedrock_logs.id
+
+  block_public_acls      = true
+  block_public_policy    = true
+  ignore_public_acls     = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_policy" "bedrock_logs" {
+  provider = aws.bedrock
+
+  bucket = aws_s3_bucket.bedrock_logs.id
+
+  depends_on = [
+    aws_s3_bucket_public_access_block.bedrock_logs,
+    aws_s3_bucket_ownership_controls.bedrock_logs,
+  ]
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Sid    = "AmazonBedrockLogsWrite",
+        Effect = "Allow",
+        Principal = {
+          Service = "bedrock.amazonaws.com"
+        },
+        Action   = ["s3:PutObject"],
+        Resource = "${aws_s3_bucket.bedrock_logs.arn}/bedrock/AWSLogs/${data.aws_caller_identity.current.account_id}/BedrockModelInvocationLogs/*",
+        Condition = {
+          StringEquals = {
+            "aws:SourceAccount" = data.aws_caller_identity.current.account_id
+          },
+          ArnLike = {
+            "aws:SourceArn" = "arn:aws:bedrock:${var.bedrock_region}:${data.aws_caller_identity.current.account_id}:*"
+          }
+        }
+      }
+    ]
+  })
+}
+
+data "aws_caller_identity" "current" {}
+
+resource "aws_bedrock_model_invocation_logging_configuration" "main" {
+  provider = aws.bedrock
+
+  logging_config {
+    text_data_delivery_enabled      = true
+    image_data_delivery_enabled     = false
+    embedding_data_delivery_enabled = false
+    video_data_delivery_enabled      = false
+
+    s3_config {
+      bucket_name = aws_s3_bucket.bedrock_logs.id
+      key_prefix  = "bedrock"
+    }
+  }
+}
+
+########################
 # CLOUDFRONT + ROUTE53
 ########################
+
+resource "aws_cloudfront_origin_access_control" "app_oac" {
+  name                              = "meetup-app-oac"
+  description                       = "OAC para CloudFront acessar app/ no bucket meetup-bosch"
+  origin_access_control_origin_type = "s3"
+  signing_behavior                  = "always"
+  signing_protocol                  = "sigv4"
+}
+
+resource "aws_s3_bucket_policy" "main_cloudfront" {
+  bucket = data.aws_s3_bucket.main.id
+
+  depends_on = [aws_s3_bucket_public_access_block.main_public_access]
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Sid       = "AllowCloudFrontApp",
+        Effect    = "Allow",
+        Principal = { Service = "cloudfront.amazonaws.com" },
+        Action    = "s3:GetObject",
+        Resource  = "${data.aws_s3_bucket.main.arn}/app/*",
+        Condition = {
+          StringEquals = {
+            "AWS:SourceArn" = aws_cloudfront_distribution.app_cdn.arn
+          }
+        }
+      }
+    ]
+  })
+}
 
 resource "aws_cloudfront_response_headers_policy" "security_headers" {
   name = "security-headers-meetup"
@@ -477,19 +580,14 @@ resource "aws_cloudfront_distribution" "app_cdn" {
   aliases = [var.domain_name]
 
   origin {
-    domain_name = aws_s3_bucket_website_configuration.app_website.website_endpoint
-    origin_id   = "s3-website-app"
-
-    custom_origin_config {
-      http_port              = 80
-      https_port             = 443
-      origin_protocol_policy = "http-only"
-      origin_ssl_protocols   = ["TLSv1.2"]
-    }
+    domain_name              = data.aws_s3_bucket.main.bucket_regional_domain_name
+    origin_id                = "s3-app"
+    origin_path              = "/app"
+    origin_access_control_id = aws_cloudfront_origin_access_control.app_oac.id
   }
 
   default_cache_behavior {
-    target_origin_id       = "s3-website-app"
+    target_origin_id       = "s3-app"
     viewer_protocol_policy = "redirect-to-https"
 
     allowed_methods = ["GET", "HEAD"]
@@ -547,13 +645,4 @@ resource "aws_route53_record" "app_alias" {
   }
 }
 
-resource "aws_s3_bucket_public_access_block" "app_public_access" {
-  bucket = aws_s3_bucket.app.id
-
-  # Desligar o bloqueio de políticas e ACLs públicas
-  block_public_acls       = false
-  ignore_public_acls      = false
-  block_public_policy     = false
-  restrict_public_buckets = false
-}
 

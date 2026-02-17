@@ -1,114 +1,128 @@
-# AWS Community – Pipeline de Transcrição e Resumo Automatizado
+# Prompt para Geração de Apresentação (gamma.app)
 
-**Base para apresentação do projeto** (meetup, demo, documentação).
-
----
-
-## Slide 1: Título
-
-**AWS Community – Pipeline de Transcrição e Resumo Automatizado**
-
-- Processamento automatizado de vídeos na AWS
-- Transcrição (Transcribe) + Resumo com IA (Bedrock)
-- Stack serverless: S3, Lambda, EventBridge, CloudFront, Cognito
-
-*Apresentador | Data | AWS Community Campinas*
+Use o texto abaixo como prompt para uma LLM no gamma.app ou similar, para gerar slides profissionais sobre o projeto.
 
 ---
 
-## Slide 2: O que o sistema faz?
+## Instruções para a LLM
 
-1. **Upload** de vídeo `.mp4` (e opcionalmente prompt e modelo LLM) pela interface web
-2. **Transcrição** automática → geração de legendas `.srt` (Amazon Transcribe)
-3. **Resumo** em Markdown → gerado por modelo no Amazon Bedrock
-4. **Visualização** de transcrições e resumos na mesma interface (Markdown, Mermaid, syntax highlight)
+Gere uma apresentação em slides sobre o projeto descrito abaixo. A apresentação deve ser clara, visual e adequada para um meetup técnico ou demo. Inclua:
 
-*Tudo disparado por eventos: sem filas manuais.*
+1. **Slide de título** – Nome do projeto e subtítulo
+2. **Contexto e problema** – O que o sistema resolve
+3. **Arquitetura** – Diagrama ou descrição visual dos componentes
+4. **Fluxo de dados** – Sequência do processamento
+5. **Componentes e tecnologias** – Tabela ou lista organizada
+6. **Segurança e boas práticas** – Resumo das medidas
+7. **Como colocar no ar** – Passos de deploy
+8. **Slide de encerramento** – Contato e próximos passos
 
----
-
-## Slide 3: Arquitetura em uma frase
-
-**Frontend (S3 + CloudFront)** envia o vídeo para **S3** → **EventBridge** dispara **Lambda Transcribe** → **Transcribe** gera `.srt` → novo evento dispara **Lambda Bedrock** → **Bedrock** gera resumo `.md` → usuário vê e baixa na mesma interface.
-
-- Autenticação: **Cognito Identity Pool** (acesso não autenticado ao bucket)
-- DNS/HTTPS: **Route53** + **ACM** + **CloudFront**
+Mantenha os slides concisos, com bullet points e imagens/diagramas quando fizer sentido. Use linguagem técnica mas acessível.
 
 ---
 
-## Slide 4: Diagrama de alto nível
+## Contexto do Projeto
 
-```
-[Usuário] → [Web App S3+CF] → [S3 video/]
-                                    ↓
-[EventBridge] → [Lambda Transcribe] → [Amazon Transcribe] → [S3 transcribe/]
-                                                                    ↓
-[EventBridge] → [Lambda Bedrock] → [Amazon Bedrock] → [S3 resumo/]
-                                                          ↓
-[Usuário] ← listagem e preview ← [Web App]
-```
+**Nome:** AWS Community – Pipeline de Transcrição e Resumo Automatizado
+
+**Objetivo:** Sistema serverless na AWS que processa vídeos automaticamente: faz transcrição de áudio para legendas (.srt) e gera resumos inteligentes em Markdown usando modelos de IA (Amazon Bedrock).
+
+**Problema que resolve:** Automatizar o trabalho manual de transcrever palestras, aulas ou vídeos técnicos e produzir resumos estruturados para estudo, documentação ou compartilhamento.
+
+**Público-alvo:** Desenvolvedores, equipes de conteúdo, educadores e quem precisa processar vídeos em escala.
 
 ---
 
-## Slide 5: Tecnologias
+## Arquitetura
 
-| Camada        | Serviço / stack                          |
-|---------------|------------------------------------------|
-| Frontend      | HTML/CSS/JS, S3, CloudFront              |
-| Auth          | Cognito Identity Pool                    |
-| Orquestração  | EventBridge (regras S3 → Lambda)         |
-| Processamento | Lambda (Python 3.12)                     |
-| IA/ML         | Amazon Transcribe, Amazon Bedrock        |
-| Infra         | Terraform, scripts AWS CLI (ACM, IAM)    |
+O sistema usa uma **arquitetura serverless event-driven** na AWS:
 
----
-
-## Slide 6: Fluxo do usuário
-
-1. Acessa o site (HTTPS, domínio customizado)
-2. Escolhe vídeo `.mp4`, opcionalmente prompt e modelo LLM
-3. Clica em Enviar → upload via Cognito para o S3
-4. Aguarda alguns minutos (transcrição + resumo automáticos)
-5. Aba "Transcrições" ou "Resumos" → clica no arquivo → visualiza ou baixa
-
-*Prompt e modelo por vídeo permitem diferentes estilos de resumo.*
+- **Frontend:** Aplicação web estática (HTML/CSS/JS) hospedada no S3 e distribuída via CloudFront com HTTPS
+- **Autenticação:** Cognito Identity Pool (acesso não autenticado ao S3 para upload/download)
+- **Armazenamento:** Um único bucket S3 (`meetup-bosch`) com prefixos:
+  - `app/` – frontend
+  - `model/video/` – vídeos .mp4
+  - `model/transcribe/` – legendas .srt
+  - `model/resumo/` – resumos .md
+  - `model/prompts/` – prompts personalizados (opcional)
+  - `model/models/` – modelo LLM selecionado por vídeo (opcional)
+- **Orquestração:** EventBridge recebe eventos do S3 e dispara Lambdas
+- **Processamento:** Duas funções Lambda em Python 3.12
+- **IA/ML:** Amazon Transcribe (transcrição) e Amazon Bedrock (resumos com múltiplos modelos: Claude, Nova, DeepSeek, GPT-4o Mini)
 
 ---
 
-## Slide 7: Simplificações recentes
+## Componentes e Relacionamentos
 
-- **Um único script** para atualizar o app: `update_app_config.sh` (Identity Pool + bucket)
-- **Scripts AWS CLI** para pré-requisitos:
-  - `setup-acm-certificate.sh` → certificado ACM (us-east-1)
-  - `setup-iam-prereqs.sh` → usuário IAM opcional para deploy
-- **Deploy do app**: `deploy_app.sh` lê bucket e CloudFront ID dos outputs do Terraform (nada hardcoded)
-- **Terraform**: output `cloudfront_distribution_id` para invalidação
-
----
-
-## Slide 8: Como colocar no ar (resumido)
-
-1. **Certificado**: `DOMAIN_NAME=... HOSTED_ZONE_ID=... bash script/setup-acm-certificate.sh` → copiar ARN para `terraform.tfvars`
-2. **Terraform**: preencher `terraform.tfvars` (domínio, hosted zone, ARN do certificado, Bedrock) → `bash script/build_lambdas.sh` → `bash script/terraform_deploy.sh`
-3. **Frontend**: `bash script/deploy_app.sh`
-
-*Documentação completa no README.md.*
+| Componente | Função | Relaciona-se com |
+|------------|--------|------------------|
+| **Interface Web** | Upload de vídeo, prompt e modelo; listagem, preview, download e exclusão de transcrições e resumos | S3 (via Cognito), CloudFront |
+| **S3** | Armazena vídeos, transcrições, resumos, prompts e frontend | EventBridge, Lambdas, CloudFront, Cognito |
+| **EventBridge** | Dispara Lambdas quando objetos são criados no S3 | S3, Lambda Transcribe, Lambda Bedrock |
+| **Lambda Transcribe** | Inicia job no Amazon Transcribe ao detectar .mp4 em `model/video/` | S3, Transcribe |
+| **Amazon Transcribe** | Gera legendas .srt a partir do áudio do vídeo | Lambda Transcribe, S3 |
+| **Lambda Bedrock** | Extrai texto do .srt, lê prompt/modelo do S3, chama Bedrock e salva resumo .md | S3, Bedrock |
+| **Amazon Bedrock** | Gera resumo em Markdown com base na transcrição e no prompt | Lambda Bedrock |
+| **CloudFront** | CDN e HTTPS para o frontend | S3 (OAC), Route53, ACM |
+| **Cognito Identity Pool** | Credenciais temporárias para o app acessar o S3 | Interface Web, S3 |
 
 ---
 
-## Slide 9: Segurança e custos
+## Fluxo de Dados (Sequência)
 
-- **Segurança**: Cognito com permissões restritas aos prefixos do bucket; HTTPS; políticas IAM mínimas nas Lambdas
-- **Custos**: S3, Lambda, Transcribe (por minuto de áudio), Bedrock (por token), CloudFront; EventBridge nos primeiros 14M eventos/mês grátis
+1. Usuário faz upload de vídeo .mp4 (e opcionalmente prompt e modelo LLM) pela interface
+2. App envia arquivos ao S3 via Cognito (video → `model/video/`, prompt → `model/prompts/`, modelo → `model/models/`)
+3. S3 emite evento "Object Created" para o EventBridge
+4. EventBridge invoca a Lambda Transcribe
+5. Lambda Transcribe inicia job no Amazon Transcribe
+6. Transcribe gera .srt e salva em `model/transcribe/`
+7. S3 emite novo evento; EventBridge invoca a Lambda Bedrock
+8. Lambda Bedrock lê .srt, prompt (se existir) e modelo do S3
+9. Lambda Bedrock chama a API Converse do Bedrock com o modelo selecionado
+10. Bedrock retorna o resumo; Lambda grava .md em `model/resumo/`
+11. Usuário vê transcrições e resumos na interface, pode visualizar, baixar ou excluir
 
 ---
 
-## Slide 10: Próximos passos / contato
+## Tecnologias por Camada
 
-- Repositório: *(incluir link do repositório)*
-- README: instruções detalhadas, troubleshooting, scripts
-- **PRESENTATION.md**: esta base para slides
+| Camada | Tecnologias |
+|--------|-------------|
+| Frontend | HTML5, CSS3, JavaScript, Marked.js, Highlight.js, DOMPurify, Mermaid.js |
+| Hospedagem | S3, CloudFront |
+| Auth | Cognito Identity Pool |
+| Orquestração | EventBridge |
+| Compute | Lambda (Python 3.12) |
+| IA/ML | Amazon Transcribe, Amazon Bedrock |
+| Infraestrutura | Terraform, AWS CLI (ACM, IAM) |
 
-**Contato:** Marcos Ramalho – mramalho@gmail.com – [linkedin.com/in/ramalho.dev](https://www.linkedin.com/in/ramalho.dev)
+---
 
-*Desenvolvido com AWS Serverless.*
+## Segurança
+
+- Config em runtime (config.json) – sem dados sensíveis no código
+- CORS restrito ao domínio do app
+- Criptografia SSE-S3 no bucket
+- Block Public Access no bucket
+- Security headers no CloudFront (HSTS, X-Content-Type-Options, etc.)
+- IAM com menor privilégio
+- DOMPurify para sanitizar Markdown e evitar XSS
+- Limite de 2000MB no upload de vídeo
+
+---
+
+## Deploy Resumido
+
+1. Copiar `config/config.env.example` para `config/config.env` e preencher DOMAIN_NAME e HOSTED_ZONE_ID
+2. Executar `bash script/create-all.sh` (cria ACM, Terraform, Lambdas e deploy do app)
+3. Para destruir: `bash script/destroy-all.sh`
+
+---
+
+## Contato
+
+**Autor:** Marcos Ramalho  
+**E-mail:** mramalho@gmail.com  
+**LinkedIn:** linkedin.com/in/ramalho.dev
+
+*Desenvolvido com AWS Serverless*

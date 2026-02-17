@@ -18,14 +18,19 @@ output "identity_pool_id" {
   value       = aws_cognito_identity_pool.public_identity.id
 }
 
-output "cps_bucket_name" {
-  description = "Nome do bucket CPS (para usar no app.js)"
-  value       = aws_s3_bucket.cps.bucket
+output "bucket_name" {
+  description = "Nome do bucket único (meetup-bosch)"
+  value       = data.aws_s3_bucket.main.id
 }
 
-output "app_bucket_name" {
-  description = "Nome do bucket do app"
-  value       = aws_s3_bucket.app.bucket
+output "app_prefix" {
+  description = "Prefix do app no bucket"
+  value       = "app/"
+}
+
+output "model_prefix" {
+  description = "Prefix dos dados (vídeos, transcrições, resumos) no bucket"
+  value       = "model/"
 }
 
 output "cloudfront_distribution_id" {

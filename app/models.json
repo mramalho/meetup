@@ -1,19 +1,19 @@
 {
   "models": [
     {
-        "id": "deepseek.r1-v1:0",
-        "name": "DeepSeek R1",
-        "description": "Modelo avançado com inference profile"
-    },
-    {
-      "id": "amazon.nova-lite-v1:0",
+      "id": "amazon.nova-2-lite-v1:0",
       "name": "Amazon Nova Lite",
       "description": "Modelo leve e rápido da Amazon"
     },
     {
-        "id": "anthropic.claude-haiku-4-5-20251001-v1:0",
-        "name": "Claude Haiku 4.5",
-        "description": "Modelo rápido e eficiente da Anthropic"
+      "id": "anthropic.claude-haiku-4-5-20251001-v1:0",
+      "name": "Claude Haiku 4.5",
+      "description": "Modelo rápido e eficiente da Anthropic"
+    },    
+    {
+        "id": "deepseek.r1-v1:0",
+        "name": "DeepSeek R1",
+        "description": "Modelo avançado com inference profile"
     },
     {
         "id": "openai.gpt-4o-mini",

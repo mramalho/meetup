@@ -10,7 +10,7 @@ Este documento registra as falhas identificadas e as medidas aplicadas.
 
 ### 2. config.json.example no S3
 - **Problema**: Template com placeholders era publicado no S3, expondo a estrutura da configuração.
-- **Correção**: `deploy_app.sh` agora exclui `config.json.example` do sync (`--exclude "config.json.example"`).
+- **Correção**: Configurações centralizadas em `config/`. O `config.json` é gerado em `config/` e copiado para `app/` durante o deploy. O template `config.json.example` fica em `config/` e não é publicado.
 
 ### 3. console.log no frontend
 - **Problema**: `console.log` com quantidade de modelos poderia expor estrutura em produção.
@@ -18,7 +18,7 @@ Este documento registra as falhas identificadas e as medidas aplicadas.
 
 ### 4. Validação de tamanho de upload
 - **Problema**: Sem limite no cliente, usuário poderia enviar arquivos enormes (abuso de storage).
-- **Correção**: Adicionado limite de 2000MB no upload de vídeo.
+- **Correção**: Limite de 2000MB no upload de vídeo; limite de 500KB no prompt personalizado.
 
 ## ✅ Medidas Já Implementadas (revisão)
 
@@ -29,9 +29,16 @@ Este documento registra as falhas identificadas e as medidas aplicadas.
 | Criptografia S3 (CPS + backend) | ✅ |
 | Block Public Access (backend) | ✅ |
 | Security headers CloudFront | ✅ |
-| terraform.tfvars, config.env, config.json no .gitignore | ✅ |
+| terraform.tfvars, config/config.env, config/config.json no .gitignore | ✅ |
 | DOMPurify para sanitizar Markdown | ✅ |
 | IAM least privilege | ✅ |
+
+## ✅ Model Invocation Logging (Bedrock)
+
+- **Configuração**: Logs de invocações do Bedrock enviados para S3 para análises posteriores, auditoria e compliance.
+- **Destino**: Bucket S3 dedicado (`{bucket_name}-bedrock-logs` ou `BEDROCK_LOGS_BUCKET_NAME` customizado).
+- **Dados**: Prompts e respostas em texto (JSON gzipped), metadata de invocação.
+- **Terraform**: `aws_bedrock_model_invocation_logging_configuration` + bucket com política para `bedrock.amazonaws.com`.
 
 ## ⚠️ Recomendações Adicionais
 
@@ -39,9 +46,9 @@ Este documento registra as falhas identificadas e as medidas aplicadas.
 
 2. **Logs das Lambdas**: Os prints restantes (bucket, key, status) são úteis para debugging. Em ambiente sensível, considere log level configurável.
 
-3. **config.json**: É público por design (Identity Pool ID deve ser conhecido pelo cliente). Não armazene secrets neste arquivo.
+3. **config/config.json**: É público por design (Identity Pool ID deve ser conhecido pelo cliente). Não armazene secrets neste arquivo.
 
-4. **Terraform state**: O state em S3 pode conter valores sensíveis. Garanta que o bucket `mramalho-tfvars` tenha acesso restrito apenas à conta/usuários autorizados.
+4. **Terraform state**: O state em S3 pode conter valores sensíveis. Garanta que o bucket `meetup-bosch` tenha acesso restrito apenas à conta/usuários autorizados.
 
 ## Correção: Legendas e resumos não gerados
 

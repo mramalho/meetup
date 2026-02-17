@@ -10,7 +10,7 @@ TF_DIR="${ROOT_DIR}/terraform"
 STATE_FILE="${SCRIPT_DIR}/.create-all-state"
 
 echo ">> Este script irá DESTRUIR TODA a infraestrutura do projeto:"
-echo ">>   - Buckets S3 (app + CPS: vídeos, transcrições, resumos)"
+echo ">>   - Bucket S3 meetup-bosch (app/, model/, tfvars/)"
 echo ">>   - Lambdas (Transcribe + Bedrock)"
 echo ">>   - Regras EventBridge"
 echo ">>   - Cognito Identity Pool e roles IAM"
@@ -30,7 +30,7 @@ fi
 
 # --- 1. Terraform destroy ---
 echo ""
-echo ">> [1/3] Destruindo recursos Terraform..."
+echo ">> [1/4] Destruindo recursos Terraform..."
 cd "${TF_DIR}"
 
 if [ ! -d .terraform ]; then
@@ -40,9 +40,31 @@ fi
 
 terraform destroy ${AUTO_APPROVE:+ -auto-approve}
 
-# --- 2. Deletar certificado ACM (se foi criado pelo create-all) ---
+# --- 2. Esvaziar e deletar bucket meetup-bosch (Terraform usa data source, não remove o bucket) ---
 echo ""
-echo ">> [2/3] Verificando certificado ACM..."
+echo ">> [2/4] Esvaziando e removendo bucket meetup-bosch..."
+BUCKET="meetup-bosch"
+if aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
+  echo ">> Esvaziando bucket ${BUCKET}..."
+  aws s3 rm "s3://${BUCKET}/" --recursive 2>/dev/null || true
+  echo ">> Deletando bucket ${BUCKET}..."
+  aws s3 rb "s3://${BUCKET}" --force 2>/dev/null && echo "   Bucket deletado." || echo "   (Bucket já removido ou erro)"
+else
+  echo ">> Bucket ${BUCKET} não existe ou já foi removido."
+fi
+
+# Remover buckets antigos (migração: mramalho-tfvars, aws-community-app, aws-community-cps)
+for old_bucket in mramalho-tfvars aws-community-app aws-community-cps; do
+  if aws s3api head-bucket --bucket "$old_bucket" 2>/dev/null; then
+    echo ">> Removendo bucket legado ${old_bucket}..."
+    aws s3 rm "s3://${old_bucket}/" --recursive 2>/dev/null || true
+    aws s3 rb "s3://${old_bucket}" --force 2>/dev/null && echo "   ${old_bucket} deletado." || echo "   (Erro ao remover ${old_bucket})"
+  fi
+done
+
+# --- 3. Deletar certificado ACM (se foi criado pelo create-all) ---
+echo ""
+echo ">> [3/4] Verificando certificado ACM..."
 # Só remove ACM se foi criado pelo create-all (está no state)
 ACM_ARN=""
 if [ -f "${STATE_FILE}" ]; then
@@ -56,9 +78,9 @@ else
   echo ">> Nenhum certificado ACM encontrado para remover."
 fi
 
-# --- 3. Deletar usuário IAM (se foi criado pelo create-all) ---
+# --- 4. Deletar usuário IAM (se foi criado pelo create-all) ---
 echo ""
-echo ">> [3/3] Verificando usuário IAM..."
+echo ">> [4/4] Verificando usuário IAM..."
 IAM_USER_CREATED=""
 DEPLOY_USER_NAME=""
 if [ -f "${STATE_FILE}" ]; then

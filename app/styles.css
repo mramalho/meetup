@@ -515,6 +515,39 @@ body.dark .file-list::-webkit-scrollbar-thumb {
   overflow: hidden;
 }
 
+.file-item-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-item-delete {
+  flex-shrink: 0;
+  padding: 4px 6px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  opacity: 0.6;
+  border-radius: 4px;
+  transition: opacity 0.2s, background 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: inherit;
+}
+
+.file-item-delete:hover {
+  opacity: 1;
+  background: rgba(239, 68, 68, 0.2);
+  color: #dc2626;
+}
+
+.file-item:hover .file-item-delete {
+  opacity: 0.9;
+}
+
 body.dark .file-item {
   background: var(--bg-card-dark);
   border-color: var(--border-dark);
@@ -902,19 +935,43 @@ body.dark .preview-content .markdown-body td {
   color: var(--text-main-dark);
 }
 
-/* Garante que tabelas fiquem responsivas no modo escuro */
-body.dark .preview-content .markdown-body table {
+/* Tabelas: contraste adequado - sobrescreve github-markdown-css */
+/* Modo claro: fundo claro, texto escuro */
+.preview-content table td,
+.preview-content .markdown-body table td {
+  color: #000000 !important;
+  background-color: #ffffff !important;
+}
+
+.preview-content table tr:nth-child(2n) td,
+.preview-content .markdown-body table tr:nth-child(2n) td {
+  background-color: #f6f8fa !important;
+  color: #000000 !important;
+}
+
+/* Modo escuro: fundo escuro, texto branco */
+body.dark .preview-content table td,
+body.dark .preview-content .markdown-body table td {
+  color: #ffffff !important;
+  background-color: var(--bg-card-dark) !important;
+}
+
+body.dark .preview-content table tr:nth-child(2n) td,
+body.dark .preview-content .markdown-body table tr:nth-child(2n) td {
+  background-color: rgba(255, 255, 255, 0.08) !important;
+  color: #ffffff !important;
+}
+
+body.dark .preview-content .markdown-body table,
+body.dark .preview-content table {
   border-color: var(--border-dark);
 }
 
-body.dark .preview-content .markdown-body table th {
-  background: var(--accent);
-  color: #fff;
+body.dark .preview-content .markdown-body table th,
+body.dark .preview-content table th {
+  background: var(--accent) !important;
+  color: #fff !important;
   border-color: var(--border-dark);
-}
-
-body.dark .preview-content .markdown-body table tr:nth-child(2n) {
-  background-color: rgba(255, 255, 255, 0.05);
 }
 
 body.dark .preview-content .mermaid:empty::before {

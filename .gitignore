@@ -55,11 +55,12 @@ logs/
 *.backup
 app/app.js.backup
 
-# Scripts - config e state local
-script/config.env
+# Config - arquivos com valores sensíveis (contém identityPoolId, bucket, credenciais)
+config/config.env
+config/config.json
 script/.create-all-state
 
-# App - config gerado no deploy (contém identityPoolId, bucket)
+# App - config.json copiado durante deploy (gerado a partir de config/config.json)
 app/config.json
 
 # OS

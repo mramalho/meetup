@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Cria o bucket S3 para o backend do Terraform (state remoto).
-# Bucket: mramalho-tfvars
-# Path: meetup/terraform.tfstate (projeto meetup)
+# Bucket: meetup-bosch
+# Path: tfvars/meetup/terraform.tfstate
 #
 # Segurança (alinhado com as práticas do projeto):
 # - Block Public Access (nenhum acesso público)
@@ -12,8 +12,7 @@
 # Uso: bash script/setup-terraform-backend.sh
 set -e
 
-BUCKET="mramalho-tfvars"
-PROJECT="meetup"
+BUCKET="meetup-bosch"
 REGION="${AWS_REGION:-us-east-2}"
 
 echo ">> Verificando bucket ${BUCKET}..."
@@ -57,5 +56,5 @@ aws s3api put-bucket-encryption \
   }'
 
 echo ""
-echo ">> Backend configurado: s3://${BUCKET}/${PROJECT}/terraform.tfstate"
+echo ">> Backend configurado: s3://${BUCKET}/tfvars/meetup/terraform.tfstate"
 echo ">> Execute 'terraform init' na pasta terraform/."

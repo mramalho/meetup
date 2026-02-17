@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Cria toda a infraestrutura do zero: ACM, IAM (opcional), Terraform e deploy do app.
 # Uso:
-#   1. cp script/config.env.example script/config.env
-#   2. Edite script/config.env com seus valores
+#   1. cp config/config.env.example config/config.env
+#   2. Edite config/config.env com seus valores
 #   3. bash script/create-all.sh
 #
 # O script descobre HOSTED_ZONE_ID automaticamente se estiver vazio e o domínio existir no Route53.
@@ -18,28 +18,29 @@ echo ">> create-all.sh - Criação completa"
 echo "=========================================="
 
 # Carregar config
-if [ -f "${SCRIPT_DIR}/config.env" ]; then
+CONFIG_DIR="${ROOT_DIR}/config"
+if [ -f "${CONFIG_DIR}/config.env" ]; then
   echo ">> Carregando config.env..."
   set -a
-  source "${SCRIPT_DIR}/config.env"
+  source "${CONFIG_DIR}/config.env"
   set +a
 else
   echo "❌ Arquivo config.env não encontrado."
-  echo "   Copie o exemplo: cp script/config.env.example script/config.env"
-  echo "   Depois edite script/config.env com seus valores."
+  echo "   Copie o exemplo: cp config/config.env.example config/config.env"
+  echo "   Depois edite config/config.env com seus valores."
   exit 1
 fi
 
-DOMAIN_NAME="${DOMAIN_NAME:?Defina DOMAIN_NAME em config.env}"
+DOMAIN_NAME="${DOMAIN_NAME:?Defina DOMAIN_NAME em config/config.env}"
 CREATE_ACM="${CREATE_ACM:-1}"
 CREATE_IAM_USER="${CREATE_IAM_USER:-0}"
 DEPLOY_USER_NAME="${DEPLOY_USER_NAME:-aws-meetup-deploy}"
 AWS_REGION="${AWS_REGION:-us-east-2}"
-APP_BUCKET_NAME="${APP_BUCKET_NAME:-aws-community-app}"
-CPS_BUCKET_NAME="${CPS_BUCKET_NAME:-aws-community-cps}"
+BUCKET_NAME="${BUCKET_NAME:-meetup-bosch}"
 BEDROCK_REGION="${BEDROCK_REGION:-us-east-2}"
 BEDROCK_MODEL_ID="${BEDROCK_MODEL_ID:-anthropic.claude-haiku-4-5-20251001-v1:0}"
 BEDROCK_INFERENCE_PROFILE="${BEDROCK_INFERENCE_PROFILE:-}"
+BEDROCK_LOGS_BUCKET_NAME="${BEDROCK_LOGS_BUCKET_NAME:-}"
 OBSERVABILITY_DEBUG="${OBSERVABILITY_DEBUG:-0}"
 OBSERVABILITY_TRACE="${OBSERVABILITY_TRACE:-0}"
 
@@ -71,7 +72,7 @@ print(best or '')
   if [ -z "${HOSTED_ZONE_ID}" ]; then
     echo "⚠️  Não foi possível descobrir HOSTED_ZONE_ID automaticamente."
     echo "   Liste suas zonas: aws route53 list-hosted-zones --query \"HostedZones[*].{Name:Name,Id:Id}\" --output table"
-    echo "   Adicione HOSTED_ZONE_ID em config.env (apenas a parte após /hostedzone/, ex: Z0ABC123)"
+    echo "   Adicione HOSTED_ZONE_ID em config/config.env (apenas a parte após /hostedzone/, ex: Z0ABC123)"
     echo ""
     echo "   O Terraform precisa do hosted_zone_id para criar o registro Route53. Não é possível continuar sem ele."
     exit 1
@@ -92,7 +93,7 @@ if [ "${CREATE_ACM}" = "1" ]; then
   fi
   echo "   ACM_CERTIFICATE_ARN=$ACM_CERTIFICATE_ARN" >> "${STATE_FILE}"
 else
-  ACM_CERTIFICATE_ARN="${ACM_CERTIFICATE_ARN:?Defina ACM_CERTIFICATE_ARN em config.env quando CREATE_ACM=0}"
+  ACM_CERTIFICATE_ARN="${ACM_CERTIFICATE_ARN:?Defina ACM_CERTIFICATE_ARN em config/config.env quando CREATE_ACM=0}"
 fi
 
 # --- 2. Usuário IAM (opcional) ---
@@ -113,8 +114,7 @@ echo ""
 echo ">> [3/6] Gerando terraform.tfvars..."
 cat > "${TF_DIR}/terraform.tfvars" << EOF
 aws_region         = "${AWS_REGION}"
-app_bucket_name    = "${APP_BUCKET_NAME}"
-cps_bucket_name    = "${CPS_BUCKET_NAME}"
+bucket_name        = "${BUCKET_NAME}"
 domain_name        = "${DOMAIN_NAME}"
 acm_certificate_arn = "${ACM_CERTIFICATE_ARN}"
 hosted_zone_id     = "${HOSTED_ZONE_ID}"
@@ -122,6 +122,7 @@ hosted_zone_id     = "${HOSTED_ZONE_ID}"
 bedrock_region            = "${BEDROCK_REGION}"
 bedrock_model_id          = "${BEDROCK_MODEL_ID}"
 bedrock_inference_profile = "${BEDROCK_INFERENCE_PROFILE}"
+bedrock_logs_bucket_name  = "${BEDROCK_LOGS_BUCKET_NAME:-}"
 
 observability_debug = "${OBSERVABILITY_DEBUG}"
 observability_trace = "${OBSERVABILITY_TRACE}"
@@ -129,7 +130,7 @@ EOF
 
 # --- 4. Backend Terraform (bucket S3 para state) ---
 echo ""
-echo ">> [4/7] Verificando backend Terraform (s3://mramalho-tfvars/meetup)..."
+echo ">> [4/7] Verificando backend Terraform (s3://meetup-bosch/tfvars/meetup)..."
 bash "${SCRIPT_DIR}/setup-terraform-backend.sh" 2>/dev/null || true
 
 # --- 5. Build das Lambdas ---

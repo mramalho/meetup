@@ -27,11 +27,11 @@ if (typeof mermaid !== 'undefined') {
   });
 }
 
-const videoPrefix = "video/";
-const promptPrefix = "prompts/";
-const modelPrefix = "models/";
-const srtPrefix   = "transcribe/";
-const mdPrefix    = "resumo/";
+const videoPrefix = "model/video/";
+const promptPrefix = "model/prompts/";
+const modelPrefix = "model/models/";
+const srtPrefix   = "model/transcribe/";
+const mdPrefix    = "model/resumo/";
 
 const srtListDiv = document.getElementById("srtList");
 const mdListDiv  = document.getElementById("mdList");
@@ -115,7 +115,7 @@ async function init() {
           <h2>⚠️ Configuração necessária</h2>
           <p>O arquivo <code>config.json</code> não foi encontrado ou está incompleto.</p>
           <p>Execute o deploy (<code>bash script/deploy_app.sh</code>) para gerar o config.json a partir dos outputs do Terraform.</p>
-          <p style="color: #666; font-size: 0.9rem;">Para desenvolvimento local, crie <code>app/config.json</code> com identityPoolId, region e videoBucket.</p>
+          <p style="color: #666; font-size: 0.9rem;">Para desenvolvimento local, crie <code>config/config.json</code> e copie para <code>app/config.json</code>, ou execute o deploy.</p>
         </div>`;
     }
     return;
@@ -131,15 +131,13 @@ async function init() {
 
   await loadModels();
 
-  // Dark mode
   darkModeToggle.addEventListener("click", () => {
-  const body = document.body;
-  const dark = body.classList.contains("dark");
-  body.classList.toggle("dark", !dark);
-  body.classList.toggle("light", dark);
-  // Se estava dark, agora está light (mostra 🌙), se estava light, agora está dark (mostra ☀️)
-  darkModeToggle.textContent = !dark ? "☀️" : "🌙";
-});
+    const body = document.body;
+    const isDark = body.classList.contains("dark");
+    body.classList.toggle("dark", !isDark);
+    body.classList.toggle("light", isDark);
+    darkModeToggle.textContent = isDark ? "☀️" : "🌙";
+  });
 
 // Tabs (srt/md)
 tabs.forEach(tab => {
@@ -189,14 +187,16 @@ uploadBtn.addEventListener("click", async () => {
     return;
   }
 
-  // Validar arquivo de prompt se fornecido
   if (promptFile) {
     const validExtensions = [".txt", ".md"];
     const fileName = promptFile.name.toLowerCase();
-    const hasValidExtension = validExtensions.some(ext => fileName.endsWith(ext));
-    
-    if (!hasValidExtension) {
+    if (!validExtensions.some(ext => fileName.endsWith(ext))) {
       alert("O arquivo de prompt precisa ser .txt ou .md");
+      return;
+    }
+    const MAX_PROMPT_KB = 500;
+    if (promptFile.size > MAX_PROMPT_KB * 1024) {
+      alert(`O prompt excede o limite de ${MAX_PROMPT_KB}KB.`);
       return;
     }
   }
@@ -281,48 +281,75 @@ uploadBtn.addEventListener("click", async () => {
   }
 });
 
+async function loadFileList(prefix, ext, container) {
+  const result = await s3.listObjectsV2({ Bucket: config.videoBucket, Prefix: prefix }).promise();
+  container.innerHTML = "";
+  (result.Contents || [])
+    .filter(obj => obj.Key?.toLowerCase().endsWith(ext))
+    .forEach(obj => container.appendChild(createFileItem(obj.Key, config.videoBucket, ext === ".srt" ? "srt" : "md")));
+}
+
 async function loadSRTFiles() {
-  const params = { Bucket: config.videoBucket, Prefix: srtPrefix };
-  const result = await s3.listObjectsV2(params).promise();
-
-  srtListDiv.innerHTML = "";
-
-  (result.Contents || []).forEach(obj => {
-    if (!obj.Key || !obj.Key.toLowerCase().endsWith(".srt")) return;
-
-    const el = document.createElement("div");
-    el.className = "file-item";
-    el.textContent = obj.Key.split("/").pop();
-
-    el.onclick = () => {
-      selectItem(el, { key: obj.Key, bucket: config.videoBucket, type: "srt" });
-      loadFilePreview(obj.Key, "srt");
-    };
-
-    srtListDiv.appendChild(el);
-  });
+  await loadFileList(srtPrefix, ".srt", srtListDiv);
 }
 
 async function loadMDFiles() {
-  const params = { Bucket: config.videoBucket, Prefix: mdPrefix };
-  const result = await s3.listObjectsV2(params).promise();
+  await loadFileList(mdPrefix, ".md", mdListDiv);
+}
 
-  mdListDiv.innerHTML = "";
+function createFileItem(key, bucket, type) {
+  const el = document.createElement("div");
+  el.className = "file-item";
+  el.dataset.key = key;
+  el.dataset.bucket = bucket;
+  el.dataset.type = type;
 
-  (result.Contents || []).forEach(obj => {
-    if (!obj.Key || !obj.Key.toLowerCase().endsWith(".md")) return;
+  const label = document.createElement("span");
+  label.className = "file-item-label";
+  label.textContent = key.split("/").pop();
 
-    const el = document.createElement("div");
-    el.className = "file-item";
-    el.textContent = obj.Key.split("/").pop();
+  const deleteBtn = document.createElement("button");
+  deleteBtn.className = "file-item-delete";
+  deleteBtn.title = "Excluir";
+  deleteBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>';
+  deleteBtn.setAttribute("aria-label", "Excluir arquivo");
 
-    el.onclick = () => {
-      selectItem(el, { key: obj.Key, bucket: config.videoBucket, type: "md" });
-      loadFilePreview(obj.Key, "md");
-    };
-
-    mdListDiv.appendChild(el);
+  deleteBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    deleteFile(key, bucket, type, el);
   });
+
+  el.addEventListener("click", (e) => {
+    if (e.target === deleteBtn || deleteBtn.contains(e.target)) return;
+    selectItem(el, { key, bucket, type });
+    loadFilePreview(key, type);
+  });
+
+  el.appendChild(label);
+  el.appendChild(deleteBtn);
+  return el;
+}
+
+async function deleteFile(key, bucket, type, element) {
+  const fileName = key.split("/").pop();
+  if (!confirm(`Excluir "${fileName}"? Esta ação não pode ser desfeita.`)) return;
+
+  try {
+    await s3.deleteObject({ Bucket: bucket, Key: key }).promise();
+    element.remove();
+    if (currentSelected && currentSelected.key === key) {
+      currentSelected = null;
+      downloadBtn.disabled = true;
+      previewTitle.textContent = "Preview";
+      previewContent.innerHTML = "<p>Selecione um arquivo à esquerda para visualizar o conteúdo aqui.</p>";
+    }
+  } catch (err) {
+    console.error("Erro ao excluir:", err);
+    const msg = err.code === "AccessDenied" || err.statusCode === 403
+      ? "Sem permissão para excluir. Execute 'terraform apply' para atualizar as permissões."
+      : err.message || "Erro ao excluir arquivo. Verifique as permissões.";
+    alert(msg);
+  }
 }
 
 function selectItem(element, meta) {
@@ -522,7 +549,6 @@ async function loadAllLists() {
 }
 
   refreshBtn.addEventListener("click", loadAllLists);
-
   await loadAllLists();
   setInterval(loadAllLists, 60000);
 }

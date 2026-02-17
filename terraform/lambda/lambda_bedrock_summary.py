@@ -14,15 +14,16 @@ bedrock_client = boto3.client(
     region_name=os.environ.get("BEDROCK_REGION", "us-east-2"),
 )
 
-OUTPUT_BUCKET = os.environ.get("SUMMARY_OUTPUT_BUCKET", "aws-community-cps")
-OUTPUT_PREFIX = os.environ.get("SUMMARY_OUTPUT_PREFIX", "resumo/")
+OUTPUT_BUCKET = os.environ.get("SUMMARY_OUTPUT_BUCKET", "meetup-bosch")
+OUTPUT_PREFIX = os.environ.get("SUMMARY_OUTPUT_PREFIX", "model/resumo/")
+MODEL_PREFIX = os.environ.get("MODEL_PREFIX", "model/")
 MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "amazon.nova-lite-v1:0")
 # Para modelos que requerem inference profile (como deepseek.r1-v1:0), use o profile ID
 # Trata string vazia como None (quando não há inference profile necessário)
 inference_profile_raw = os.environ.get("BEDROCK_INFERENCE_PROFILE", None)
 INFERENCE_PROFILE = inference_profile_raw if inference_profile_raw and inference_profile_raw.strip() else None
 
-# Nome do arquivo do prompt padrão (empacotado junto com a Lambda; origem: script/guardrails.md)
+# Nome do arquivo do prompt padrão (empacotado junto com a Lambda; origem: prompt/guardrails.md)
 DEFAULT_PROMPT_FILENAME = "guardrails.md"
 
 
@@ -57,7 +58,7 @@ def _load_default_system_prompt() -> str:
 
 def extract_plain_text_from_srt(srt_str: str) -> str:
     """
-    Remove numeração e timestamps do SRT,
+    Remove numeração, timestamps e cabeçalho do modelo do SRT,
     retornando apenas o texto das legendas.
     """
     lines = srt_str.splitlines()
@@ -68,6 +69,10 @@ def extract_plain_text_from_srt(srt_str: str) -> str:
 
         # pula linhas vazias
         if not stripped:
+            continue
+
+        # pula cabeçalho do modelo LLM (inserido pela Lambda)
+        if stripped.startswith("# Modelo LLM:"):
             continue
 
         # pula linhas só com número (1, 2, 3...)
@@ -118,7 +123,7 @@ def get_system_prompt(base_name: str, bucket: str) -> str:
     """
     guardrails = _load_default_system_prompt()
 
-    prompt_key = f"prompts/{base_name}.txt"
+    prompt_key = f"{MODEL_PREFIX}prompts/{base_name}.txt"
     try:
         _log(f"Tentando ler prompt personalizado de s3://{bucket}/{prompt_key}")
         response = s3_client.get_object(Bucket=bucket, Key=prompt_key)
@@ -153,7 +158,7 @@ def get_selected_model(base_name: str, bucket: str) -> str:
     Tenta ler o modelo selecionado do S3.
     Se não encontrar, retorna o modelo padrão da variável de ambiente.
     """
-    model_key = f"models/{base_name}.txt"
+    model_key = f"{MODEL_PREFIX}models/{base_name}.txt"
     
     try:
         _log(f"Tentando ler modelo selecionado de s3://{bucket}/{model_key}")
@@ -176,11 +181,13 @@ def get_selected_model(base_name: str, bucket: str) -> str:
 def get_inference_profile_for_model(model_id: str):
     """
     Retorna o inference profile apropriado para o modelo.
-    DeepSeek R1 requer inference profile, outros modelos não.
+    Alguns modelos (Nova, DeepSeek) exigem inference profile em vez de on-demand.
     """
-    if model_id == "deepseek.r1-v1:0":
-        return "us.deepseek.r1-v1:0"
-    return None
+    profiles = {
+        "deepseek.r1-v1:0": "us.deepseek.r1-v1:0",
+        "amazon.nova-2-lite-v1:0": "us.amazon.nova-2-lite-v1:0",
+    }
+    return profiles.get(model_id)
 
 
 def call_bedrock_nova(transcript_text: str, system_prompt: str, model_id: str, inference_profile: str = None) -> str:
@@ -235,12 +242,15 @@ def call_bedrock_nova(transcript_text: str, system_prompt: str, model_id: str, i
 
 
 def lambda_handler(event, context):
+    # Log incondicional no início - garante que invocações apareçam no CloudWatch
+    detail = event.get("detail", {})
+    bucket = detail.get("bucket", {}).get("name", "?")
+    key = detail.get("object", {}).get("key", "?")
+    print(f"[INVOKE] Lambda acionada: bucket={bucket} key={key}")
+
     if OBS_DEBUG:
         print(f"[DEBUG] Evento recebido: {json.dumps(event, default=str)}")
     elif OBS_TRACE:
-        detail = event.get("detail", {})
-        bucket = detail.get("bucket", {}).get("name", "?")
-        key = detail.get("object", {}).get("key", "?")
         print(f"[TRACE] Evento: bucket={bucket} key={key}")
 
     detail = event.get("detail", {})
@@ -288,7 +298,32 @@ def lambda_handler(event, context):
     selected_inference_profile = get_inference_profile_for_model(selected_model_id)
     
     summary_md = call_bedrock_nova(plain_text, system_prompt, selected_model_id, selected_inference_profile)
-    
+
+    # Cabeçalho com modelo LLM utilizado (início do arquivo)
+    model_header = f"> *Modelo LLM: {selected_model_id}*\n\n"
+    summary_md = model_header + summary_md
+
+    # Atualiza o .srt com cabeçalho indicando o modelo LLM (para rastreabilidade)
+    # Remove cabeçalho existente se houver (evita duplicação em reprocessamento)
+    srt_content = srt_text
+    if srt_text.strip().startswith("# Modelo LLM:"):
+        first_blank = srt_text.find("\n\n")
+        if first_blank >= 0:
+            srt_content = srt_text[first_blank + 2 :].lstrip()
+    srt_header = f"# Modelo LLM: {selected_model_id}\n\n"
+    srt_with_header = srt_header + srt_content
+    try:
+        s3_client.put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=srt_with_header.encode("utf-8"),
+            ContentType="text/plain; charset=utf-8",
+        )
+        _log(f"Legenda atualizada com cabeçalho do modelo em s3://{bucket}/{key}")
+    except ClientError as e:
+        _log(f"Erro ao atualizar legenda com cabeçalho: {e}", always=True)
+        # Não falha o job - o resumo é o principal
+
     # Mesma base do nome do arquivo .srt (usa o nome completo do .srt para o output)
     srt_base_name = key.split("/")[-1].rsplit(".", 1)[0]
     output_key = f"{OUTPUT_PREFIX}{srt_base_name}.md"
@@ -306,6 +341,7 @@ def lambda_handler(event, context):
         _log(f"Erro ao gravar resumo no S3: {e}", always=True)
         raise
 
+    print(f"[OK] Resumo gravado em s3://{OUTPUT_BUCKET}/{output_key}")
     return {
         "status": "summary_created",
         "output_bucket": OUTPUT_BUCKET,

@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TF_DIR="${ROOT_DIR}/terraform"
 SCRIPT_DIR="${ROOT_DIR}/script"
 
-# Garantir que o bucket do backend existe (s3://mramalho-tfvars/meetup)
+# Garantir que o bucket do backend existe (s3://meetup-bosch/tfvars/meetup)
 if [ -f "${SCRIPT_DIR}/setup-terraform-backend.sh" ]; then
   bash "${SCRIPT_DIR}/setup-terraform-backend.sh" 2>/dev/null || true
 fi
