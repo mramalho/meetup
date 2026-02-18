@@ -159,7 +159,7 @@ sequenceDiagram
 
 ### Infraestrutura AWS
 
-- **S3 Bucket único** (`meetup-bosch`):
+- **S3 Bucket único** (`var.bucket_name`):
   - `app/`: Frontend estático
   - `model/`: Vídeos, transcrições, resumos e prompts personalizados
     - `model/video/`: Arquivos de vídeo `.mp4`
@@ -206,7 +206,7 @@ sequenceDiagram
 
 O state do Terraform é armazenado em S3:
 
-- **Bucket**: `meetup-bosch`
+- **Bucket**: definido em `config/config.env` (BUCKET_NAME)
 - **Path**: `tfvars/meetup/terraform.tfstate`
 
 Antes do primeiro `terraform init`, crie o bucket (se não existir):
@@ -237,7 +237,7 @@ meetup/
 │   └── assets/                 # Assets estáticos (se houver)
 │
 ├── terraform/                    # Infraestrutura como código
-│   ├── main.tf                  # Recursos principais (backend S3: s3://meetup-bosch/tfvars/meetup)
+│   ├── main.tf                  # Recursos principais (backend S3 configurado via config/config.env)
 │   ├── variables.tf             # Variáveis
 │   ├── outputs.tf               # Outputs (identity_pool_id, buckets, cloudfront_distribution_id)
 │   ├── terraform.tfvars         # Valores (não versionado)
@@ -247,13 +247,14 @@ meetup/
 │   └── build/                   # ZIPs das Lambdas (gerados por build_lambdas.sh)
 │
 ├── config/                       # Configurações centralizadas
-│   ├── config.env.example       # Exemplo para create-all
-│   └── config.json.example      # Exemplo para app (identityPoolId, bucket)
+│   ├── config.env.example       # Exemplo para create-all (DOMAIN_NAME, BUCKET_NAME, etc.)
+│   ├── config.json.example      # Exemplo para app (identityPoolId, bucket)
+│   └── backend.tfbackend.example # Exemplo para backend Terraform (bucket, region)
 │
 ├── script/                       # Scripts de automação
 │   ├── create-all.sh           # Cria TUDO do zero (ACM, IAM, Terraform, app)
 │   ├── destroy-all.sh          # Destrói TUDO (Terraform, ACM, IAM)
-│   ├── setup-terraform-backend.sh # Cria bucket S3 meetup-bosch para state (tfvars/)
+│   ├── setup-terraform-backend.sh # Cria bucket S3 para state (BUCKET_NAME de config.env)
 │   ├── setup-acm-certificate.sh # Cria certificado ACM (us-east-1) via AWS CLI
 │   ├── setup-iam-prereqs.sh     # Cria usuário IAM opcional para deploy
 │   ├── update_app_config.sh    # Atualiza app.js com outputs do Terraform
@@ -281,7 +282,8 @@ cp config/config.env.example config/config.env
 ```
 
 Edite `config/config.env` e defina pelo menos:
-- `DOMAIN_NAME` – domínio do site (ex: meetup.ramalho.dev.br)
+- `DOMAIN_NAME` – domínio do site (ex: example.com)
+- `BUCKET_NAME` – nome do bucket S3 (globalmente único)
 - `HOSTED_ZONE_ID` – ID da hosted zone no Route53 (ou deixe vazio para descoberta automática)
 
 Opcional: `CREATE_ACM=1`, `CREATE_IAM_USER=0`, etc. Veja `config/config.env.example` para todas as opções.
@@ -294,7 +296,7 @@ Para simplificar a criação da infraestrutura, use os scripts que criam certifi
 O certificado deve estar em **us-east-1**. Com domínio e hosted zone no Route53:
 
 ```bash
-export DOMAIN_NAME="meetup.ramalho.dev.br"
+export DOMAIN_NAME="example.com"
 export HOSTED_ZONE_ID="Z1234567890ABC"   # ID da hosted zone do domínio
 bash script/setup-acm-certificate.sh
 ```
@@ -317,10 +319,10 @@ Crie `terraform/terraform.tfvars`:
 
 ```hcl
 aws_region         = "us-east-2"
-bucket_name        = "meetup-bosch"
-domain_name        = "meetup.ramalho.dev.br"
+bucket_name        = "your-bucket-name"   # De config/config.env (BUCKET_NAME)
+domain_name        = "example.com"        # De config/config.env (DOMAIN_NAME)
 acm_certificate_arn = "arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/CERT_ID"  # Saída do setup-acm-certificate.sh
-hosted_zone_id     = "Z1234567890ABC"
+hosted_zone_id     = "Z1234567890ABC"     # ID da hosted zone no Route53
 
 bedrock_region            = "us-east-2"
 bedrock_model_id          = "anthropic.claude-haiku-4-5-20251001-v1:0"
@@ -385,11 +387,16 @@ Este script:
 bash script/terraform_deploy.sh
 ```
 
-Ou manualmente:
+Ou manualmente (requer `config/config.env` e `config/backend.tfbackend`):
 
 ```bash
+# 1. Copie e edite backend.tfbackend com bucket/region de config.env
+cp config/backend.tfbackend.example config/backend.tfbackend
+# Edite config/backend.tfbackend com BUCKET_NAME e AWS_REGION
+
+# 2. Init e apply
 cd terraform
-terraform init
+terraform init -backend-config=../config/backend.tfbackend
 terraform plan
 terraform apply
 ```
@@ -408,7 +415,7 @@ Este script obtém o bucket do app e o ID do CloudFront dos outputs do Terraform
 
 ### Acessando a Interface
 
-Após o deploy, acesse o site através do domínio configurado (ex: `https://meetup.ramalho.dev.br`).
+Após o deploy, acesse o site através do domínio configurado (ex: `https://example.com`).
 
 ### Upload de Vídeo
 
@@ -463,7 +470,7 @@ Você pode personalizar os resumos enviando um arquivo de prompt junto com o ví
 | `create-all.sh` | **Cria tudo do zero**: ACM, IAM (opcional), Terraform e deploy do app. Usa `config/config.env`. |
 | `destroy-all.sh` | **⚠️ DESTRÓI TUDO**: Terraform, certificado ACM e usuário IAM (se criados pelo create-all). Confirmação digitando `sim`; use `AUTO_APPROVE=1` para pular. |
 | `config/config.env.example` | Template de configuração. Copie para `config/config.env` e edite. |
-| `setup-terraform-backend.sh` | Cria bucket S3 `meetup-bosch` para state remoto (path: `tfvars/meetup/terraform.tfstate`). Aplica Block Public Access, criptografia SSE-S3 e versionamento. Execute antes do primeiro `terraform init`. |
+| `setup-terraform-backend.sh` | Cria bucket S3 para state remoto (BUCKET_NAME de config.env). Aplica Block Public Access, criptografia SSE-S3 e versionamento. Execute antes do primeiro `terraform init`. |
 | `setup-acm-certificate.sh` | Cria certificado ACM em us-east-1 (variáveis: `DOMAIN_NAME`, opcional `HOSTED_ZONE_ID`). |
 | `setup-iam-prereqs.sh` | Cria usuário IAM opcional para deploy (variável: `DEPLOY_USER_NAME`). |
 | `update_app_config.sh` | Atualiza `config/config.json` com `identity_pool_id` e bucket a partir dos outputs do Terraform. |
@@ -487,7 +494,7 @@ Ou deploy manual:
 
 ```bash
 # Pré-requisitos (certificado e opcionalmente IAM)
-DOMAIN_NAME=meetup.ramalho.dev.br HOSTED_ZONE_ID=Z... bash script/setup-acm-certificate.sh
+DOMAIN_NAME=example.com HOSTED_ZONE_ID=Z... bash script/setup-acm-certificate.sh
 DEPLOY_USER_NAME=aws-meetup-deploy bash script/setup-iam-prereqs.sh
 
 # Deploy completo
@@ -564,7 +571,7 @@ Os custos variam conforme o uso, mas os principais componentes são:
 - **S3 Bucket Policies**: CloudFront OAC para acessar `app/`; bucket privado.
 - **CloudFront**: HTTPS obrigatório com certificado SSL/TLS.
 - **Arquivos não versionados**: `terraform.tfvars`, `config/config.env` e `config/config.json` estão no `.gitignore`.
-- **Backend Terraform**: Bucket `meetup-bosch` com Block Public Access, criptografia SSE-S3 e versionamento. O state (`tfvars/meetup/terraform.tfstate`) não fica no repositório.
+- **Backend Terraform**: Bucket definido em config (BUCKET_NAME) com Block Public Access, criptografia SSE-S3 e versionamento. O state (`tfvars/meetup/terraform.tfstate`) não fica no repositório.
 - **Auditoria**: Ver `script/security-audit.md` para revisão de vulnerabilidades e correções aplicadas.
 
 ## 🐛 Troubleshooting
@@ -604,11 +611,9 @@ Contribuições são bem-vindas! Sinta-se à vontade para abrir issues ou pull r
 
 ## 📧 Contato
 
-**Autor:** Marcos Ramalho
+**Autor:** [Seu Nome]
 
-**E-mail:** mramalho@gmail.com
-
-**LinkedIn:** [www.linkedin.com/in/ramalho.dev](https://www.linkedin.com/in/ramalho.dev)
+**E-mail:** seu-email@example.com
 
 ---
 

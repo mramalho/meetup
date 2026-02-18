@@ -1,11 +1,8 @@
 terraform {
   required_version = ">= 1.6.0"
 
-  backend "s3" {
-    bucket = "meetup-bosch"
-    key    = "tfvars/meetup/terraform.tfstate"
-    region = "us-east-2"
-  }
+  # Backend configurado via -backend-config nos scripts (bucket/region de config/config.env)
+  backend "s3" {}
 
   required_providers {
     aws = {
@@ -26,7 +23,7 @@ provider "aws" {
 }
 
 ########################
-# S3 - BUCKET ÚNICO (meetup-bosch)
+# S3 - BUCKET ÚNICO (var.bucket_name)
 # Prefixos: app/ (frontend), model/ (vídeos, transcrições, resumos, prompts, models)
 # O bucket é criado por setup-terraform-backend.sh antes do terraform init.
 ########################
@@ -515,7 +512,7 @@ resource "aws_bedrock_model_invocation_logging_configuration" "main" {
 
 resource "aws_cloudfront_origin_access_control" "app_oac" {
   name                              = "meetup-app-oac"
-  description                       = "OAC para CloudFront acessar app/ no bucket meetup-bosch"
+  description                       = "OAC para CloudFront acessar app/ no bucket"
   origin_access_control_origin_type = "s3"
   signing_behavior                  = "always"
   signing_protocol                  = "sigv4"

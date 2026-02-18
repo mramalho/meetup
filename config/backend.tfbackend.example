@@ -1,0 +1,12 @@
+# Exemplo de configuração do backend S3 para Terraform.
+# Copie para backend.tfbackend e preencha com valores de config/config.env:
+#   bucket = "seu-bucket-name"   # = BUCKET_NAME
+#   region = "us-east-2"         # = AWS_REGION
+#   key    = "tfvars/meetup/terraform.tfstate"
+#
+# Uso: terraform init -backend-config=config/backend.tfbackend
+# Ou use os scripts (create-all.sh, terraform_deploy.sh) que aplicam isso automaticamente.
+
+bucket = "your-bucket-name"
+region = "us-east-2"
+key    = "tfvars/meetup/terraform.tfstate"

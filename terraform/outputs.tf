@@ -19,7 +19,7 @@ output "identity_pool_id" {
 }
 
 output "bucket_name" {
-  description = "Nome do bucket único (meetup-bosch)"
+  description = "Nome do bucket único"
   value       = data.aws_s3_bucket.main.id
 }
 

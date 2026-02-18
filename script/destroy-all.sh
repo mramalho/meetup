@@ -2,15 +2,25 @@
 # Destrói toda a infraestrutura: Terraform, certificado ACM e usuário IAM (se criados pelo create-all.sh).
 # Uso: bash script/destroy-all.sh
 #      AUTO_APPROVE=1 bash script/destroy-all.sh   # sem confirmação (ex.: CI)
+# Requer config/config.env com BUCKET_NAME para identificar o bucket a remover.
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 TF_DIR="${ROOT_DIR}/terraform"
 STATE_FILE="${SCRIPT_DIR}/.create-all-state"
+CONFIG_DIR="${ROOT_DIR}/config"
+
+# Carregar config para BUCKET_NAME (bucket a esvaziar/deletar)
+if [ -f "${CONFIG_DIR}/config.env" ]; then
+  set -a
+  source "${CONFIG_DIR}/config.env"
+  set +a
+fi
+BUCKET_NAME="${BUCKET_NAME:?Defina BUCKET_NAME em config/config.env}"
 
 echo ">> Este script irá DESTRUIR TODA a infraestrutura do projeto:"
-echo ">>   - Bucket S3 meetup-bosch (app/, model/, tfvars/)"
+echo ">>   - Bucket S3 ${BUCKET_NAME} (app/, model/, tfvars/)"
 echo ">>   - Lambdas (Transcribe + Bedrock)"
 echo ">>   - Regras EventBridge"
 echo ">>   - Cognito Identity Pool e roles IAM"
@@ -33,17 +43,21 @@ echo ""
 echo ">> [1/4] Destruindo recursos Terraform..."
 cd "${TF_DIR}"
 
+AWS_REGION="${AWS_REGION:-us-east-2}"
 if [ ! -d .terraform ]; then
   echo ">> Terraform não inicializado. Rodando terraform init..."
-  terraform init
+  terraform init -reconfigure \
+    -backend-config="bucket=${BUCKET_NAME}" \
+    -backend-config="region=${AWS_REGION}" \
+    -backend-config="key=tfvars/meetup/terraform.tfstate"
 fi
 
 terraform destroy ${AUTO_APPROVE:+ -auto-approve}
 
-# --- 2. Esvaziar e deletar bucket meetup-bosch (Terraform usa data source, não remove o bucket) ---
+# --- 2. Esvaziar e deletar bucket principal (Terraform usa data source, não remove o bucket) ---
 echo ""
-echo ">> [2/4] Esvaziando e removendo bucket meetup-bosch..."
-BUCKET="meetup-bosch"
+echo ">> [2/4] Esvaziando e removendo bucket ${BUCKET_NAME}..."
+BUCKET="${BUCKET_NAME}"
 if aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
   echo ">> Esvaziando bucket ${BUCKET}..."
   aws s3 rm "s3://${BUCKET}/" --recursive 2>/dev/null || true
@@ -52,15 +66,6 @@ if aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
 else
   echo ">> Bucket ${BUCKET} não existe ou já foi removido."
 fi
-
-# Remover buckets antigos (migração: mramalho-tfvars, aws-community-app, aws-community-cps)
-for old_bucket in mramalho-tfvars aws-community-app aws-community-cps; do
-  if aws s3api head-bucket --bucket "$old_bucket" 2>/dev/null; then
-    echo ">> Removendo bucket legado ${old_bucket}..."
-    aws s3 rm "s3://${old_bucket}/" --recursive 2>/dev/null || true
-    aws s3 rb "s3://${old_bucket}" --force 2>/dev/null && echo "   ${old_bucket} deletado." || echo "   (Erro ao remover ${old_bucket})"
-  fi
-done
 
 # --- 3. Deletar certificado ACM (se foi criado pelo create-all) ---
 echo ""

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Cria certificado SSL/TLS no ACM (us-east-1) para uso no CloudFront.
-# Uso: DOMAIN_NAME=meetup.ramalho.dev.br [HOSTED_ZONE_ID=Z...] bash script/setup-acm-certificate.sh
+# Uso: DOMAIN_NAME=example.com [HOSTED_ZONE_ID=Z...] bash script/setup-acm-certificate.sh
 set -e
 
-DOMAIN_NAME="${DOMAIN_NAME:?Defina DOMAIN_NAME (ex: meetup.ramalho.dev.br)}"
+DOMAIN_NAME="${DOMAIN_NAME:?Defina DOMAIN_NAME (ex: example.com)}"
 REGION_ACM="us-east-1"
 
 echo ">> Solicitando certificado ACM para ${DOMAIN_NAME} em ${REGION_ACM}..."

@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Cria o bucket S3 para o backend do Terraform (state remoto).
-# Bucket: meetup-bosch
-# Path: tfvars/meetup/terraform.tfstate
+# Bucket e região vêm de config/config.env (BUCKET_NAME, AWS_REGION).
 #
 # Segurança (alinhado com as práticas do projeto):
 # - Block Public Access (nenhum acesso público)
@@ -9,10 +8,18 @@
 # - Versionamento (recuperação de state)
 #
 # Execute antes do primeiro terraform init se o bucket ainda não existir.
-# Uso: bash script/setup-terraform-backend.sh
+# Uso: bash script/setup-terraform-backend.sh (carregue config.env antes ou defina BUCKET_NAME)
 set -e
 
-BUCKET="meetup-bosch"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+if [ -f "${ROOT_DIR}/config/config.env" ]; then
+  set -a
+  source "${ROOT_DIR}/config/config.env"
+  set +a
+fi
+
+BUCKET="${BUCKET_NAME:?Defina BUCKET_NAME em config/config.env}"
 REGION="${AWS_REGION:-us-east-2}"
 
 echo ">> Verificando bucket ${BUCKET}..."

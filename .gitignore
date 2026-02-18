@@ -58,6 +58,7 @@ app/app.js.backup
 # Config - arquivos com valores sensíveis (contém identityPoolId, bucket, credenciais)
 config/config.env
 config/config.json
+config/backend.tfbackend
 script/.create-all-state
 
 # App - config.json copiado durante deploy (gerado a partir de config/config.json)

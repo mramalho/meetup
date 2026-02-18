@@ -14,7 +14,7 @@ bedrock_client = boto3.client(
     region_name=os.environ.get("BEDROCK_REGION", "us-east-2"),
 )
 
-OUTPUT_BUCKET = os.environ.get("SUMMARY_OUTPUT_BUCKET", "meetup-bosch")
+OUTPUT_BUCKET = os.environ.get("SUMMARY_OUTPUT_BUCKET", "")
 OUTPUT_PREFIX = os.environ.get("SUMMARY_OUTPUT_PREFIX", "model/resumo/")
 MODEL_PREFIX = os.environ.get("MODEL_PREFIX", "model/")
 MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "amazon.nova-lite-v1:0")

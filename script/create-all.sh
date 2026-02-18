@@ -36,7 +36,7 @@ CREATE_ACM="${CREATE_ACM:-1}"
 CREATE_IAM_USER="${CREATE_IAM_USER:-0}"
 DEPLOY_USER_NAME="${DEPLOY_USER_NAME:-aws-meetup-deploy}"
 AWS_REGION="${AWS_REGION:-us-east-2}"
-BUCKET_NAME="${BUCKET_NAME:-meetup-bosch}"
+BUCKET_NAME="${BUCKET_NAME:-your-bucket-name}"
 BEDROCK_REGION="${BEDROCK_REGION:-us-east-2}"
 BEDROCK_MODEL_ID="${BEDROCK_MODEL_ID:-anthropic.claude-haiku-4-5-20251001-v1:0}"
 BEDROCK_INFERENCE_PROFILE="${BEDROCK_INFERENCE_PROFILE:-}"
@@ -130,7 +130,7 @@ EOF
 
 # --- 4. Backend Terraform (bucket S3 para state) ---
 echo ""
-echo ">> [4/7] Verificando backend Terraform (s3://meetup-bosch/tfvars/meetup)..."
+echo ">> [4/7] Verificando backend Terraform (s3://${BUCKET_NAME}/tfvars/meetup)..."
 bash "${SCRIPT_DIR}/setup-terraform-backend.sh" 2>/dev/null || true
 
 # --- 5. Build das Lambdas ---

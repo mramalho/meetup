@@ -5,15 +5,13 @@ variable "aws_region" {
 }
 
 variable "bucket_name" {
-  description = "Bucket S3 único (meetup-bosch) - app em app/, dados em model/"
+  description = "Bucket S3 único - app em app/, dados em model/. Deve ser definido em config/config.env (BUCKET_NAME)."
   type        = string
-  default     = "meetup-bosch"
 }
 
 variable "domain_name" {
-  description = "Domínio para o CloudFront"
+  description = "Domínio para o CloudFront. Deve ser definido em config/config.env (DOMAIN_NAME)."
   type        = string
-  default     = "meetup.ramalho.dev.br"
 }
 
 variable "acm_certificate_arn" {
@@ -22,7 +20,7 @@ variable "acm_certificate_arn" {
 }
 
 variable "hosted_zone_id" {
-  description = "ID da Hosted Zone em Route53 (por ex: para ramalho.dev.br)"
+  description = "ID da Hosted Zone em Route53 para o domínio"
   type        = string
 }
 

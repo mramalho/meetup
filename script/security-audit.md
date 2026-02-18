@@ -48,7 +48,7 @@ Este documento registra as falhas identificadas e as medidas aplicadas.
 
 3. **config/config.json**: É público por design (Identity Pool ID deve ser conhecido pelo cliente). Não armazene secrets neste arquivo.
 
-4. **Terraform state**: O state em S3 pode conter valores sensíveis. Garanta que o bucket `meetup-bosch` tenha acesso restrito apenas à conta/usuários autorizados.
+4. **Terraform state**: O state em S3 pode conter valores sensíveis. Garanta que o bucket do backend (BUCKET_NAME) tenha acesso restrito apenas à conta/usuários autorizados.
 
 ## Correção: Legendas e resumos não gerados
 

@@ -7,9 +7,14 @@ UPDATE_APP_CONFIG="${ROOT_DIR}/script/update_app_config.sh"
 
 # Obter do Terraform (exige terraform apply já executado)
 cd "${TF_DIR}"
-BUCKET_NAME=$(terraform output -raw bucket_name 2>/dev/null || echo "meetup-bosch")
+BUCKET_NAME=$(terraform output -raw bucket_name 2>/dev/null || echo "")
 CLOUDFRONT_DISTRIBUTION_ID=$(terraform output -raw cloudfront_distribution_id 2>/dev/null || echo "")
 cd "${ROOT_DIR}"
+
+if [ -z "$BUCKET_NAME" ]; then
+  echo "❌ bucket_name não encontrado no Terraform. Execute 'terraform apply' antes do deploy."
+  exit 1
+fi
 
 REGION="${AWS_REGION:-us-east-2}"
 
