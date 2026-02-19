@@ -8,6 +8,16 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.5.0/github-markdown.min.css" />
 </head>
 <body class="light">
+<div id="tokenGate" class="token-gate hidden">
+  <div class="token-gate-box">
+    <h2>🔐 Acesso restrito</h2>
+    <p>Informe o token de acesso para continuar.</p>
+    <input type="password" id="tokenInput" class="token-input" placeholder="Token de acesso" autocomplete="off" />
+    <p id="tokenError" class="token-error hidden"></p>
+    <button id="tokenSubmit" class="btn-primary">Acessar</button>
+    <p class="token-hint">O token pode ser enviado na URL: <code>?token=seu-token</code></p>
+  </div>
+</div>
 <div class="container">
   <aside class="sidebar">
     <section class="upload-section">

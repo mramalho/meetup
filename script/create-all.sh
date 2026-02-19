@@ -40,7 +40,8 @@ BUCKET_NAME="${BUCKET_NAME:-your-bucket-name}"
 BEDROCK_REGION="${BEDROCK_REGION:-us-east-2}"
 BEDROCK_MODEL_ID="${BEDROCK_MODEL_ID:-anthropic.claude-haiku-4-5-20251001-v1:0}"
 BEDROCK_INFERENCE_PROFILE="${BEDROCK_INFERENCE_PROFILE:-}"
-BEDROCK_LOGS_BUCKET_NAME="${BEDROCK_LOGS_BUCKET_NAME:-}"
+BEDROCK_LOGS_RETENTION_DAYS="${BEDROCK_LOGS_RETENTION_DAYS:-30}"
+CORS_EXTRA_ORIGINS="${CORS_EXTRA_ORIGINS:-}"
 OBSERVABILITY_DEBUG="${OBSERVABILITY_DEBUG:-0}"
 OBSERVABILITY_TRACE="${OBSERVABILITY_TRACE:-0}"
 
@@ -118,11 +119,12 @@ bucket_name        = "${BUCKET_NAME}"
 domain_name        = "${DOMAIN_NAME}"
 acm_certificate_arn = "${ACM_CERTIFICATE_ARN}"
 hosted_zone_id     = "${HOSTED_ZONE_ID}"
+cors_extra_origins = "${CORS_EXTRA_ORIGINS:-}"
 
 bedrock_region            = "${BEDROCK_REGION}"
 bedrock_model_id          = "${BEDROCK_MODEL_ID}"
 bedrock_inference_profile = "${BEDROCK_INFERENCE_PROFILE}"
-bedrock_logs_bucket_name  = "${BEDROCK_LOGS_BUCKET_NAME:-}"
+bedrock_logs_retention_days = ${BEDROCK_LOGS_RETENTION_DAYS:-30}
 
 observability_debug = "${OBSERVABILITY_DEBUG}"
 observability_trace = "${OBSERVABILITY_TRACE}"

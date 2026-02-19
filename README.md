@@ -1,4 +1,4 @@
-# AWS Community - Pipeline de Transcrição e Resumo Automatizado
+git # AWS Community - Pipeline de Transcrição e Resumo Automatizado
 
 Sistema completo para processamento automatizado de vídeos que gera transcrições e resumos usando serviços da AWS. O projeto permite upload de vídeos através de uma interface web, processamento automático via Amazon Transcribe e geração de resumos inteligentes usando Amazon Bedrock.
 
@@ -327,7 +327,7 @@ hosted_zone_id     = "Z1234567890ABC"     # ID da hosted zone no Route53
 bedrock_region            = "us-east-2"
 bedrock_model_id          = "anthropic.claude-haiku-4-5-20251001-v1:0"
 bedrock_inference_profile = ""   # Preencher para DeepSeek R1: "us.deepseek.r1-v1:0"
-bedrock_logs_bucket_name  = ""   # Opcional. Vazio = usa {bucket_name}-bedrock-logs (logs de invocações para auditoria)
+bedrock_logs_retention_days = 30 # Retenção dos logs do Bedrock no CloudWatch (dias). 0 = indefinido
 ```
 
 ### 3. Configuração do Frontend
@@ -527,9 +527,15 @@ O arquivo [PRESENTATION.md](PRESENTATION.md) contém um **prompt estruturado** p
 # Logs da Lambda de Transcrição
 aws logs tail /aws/lambda/start-transcribe-on-s3-upload --follow
 
-# Logs da Lambda de Resumo
+# Logs da Lambda de Resumo (processamento LLM)
 aws logs tail /aws/lambda/generate-summary-from-srt-bedrock --follow
 ```
+
+**Importante:**
+- O processamento da LLM ocorre na Lambda `generate-summary-from-srt-bedrock`. No CloudWatch, use o log group `/aws/lambda/generate-summary-from-srt-bedrock`.
+- **Região:** Verifique se está na mesma região do Terraform (ex.: `us-east-2`). O seletor de região fica no canto superior direito do console AWS.
+- **Log group ausente:** Os log groups são criados pelo Terraform. Execute `terraform apply` para garantir que existam.
+- **Erro `ResourceAlreadyExistsException`:** Se os log groups já existem (criados pela Lambda), importe-os: `cd terraform && terraform import aws_cloudwatch_log_group.lambda_transcribe /aws/lambda/start-transcribe-on-s3-upload && terraform import aws_cloudwatch_log_group.lambda_bedrock_summary /aws/lambda/generate-summary-from-srt-bedrock`
 
 ### Observabilidade (feature flags)
 
@@ -588,12 +594,23 @@ Os custos variam conforme o uso, mas os principais componentes são:
 - Verifique os logs da Lambda `start-transcribe-on-s3-upload`
 - Ative `observability_debug=1` no terraform.tfvars e faça `terraform apply` para ver o evento recebido
 
-### Resumo não é gerado
+### Resumo não é gerado (Claude Haiku 4.5 ou outro modelo)
 
-- Verifique os logs da Lambda `generate-summary-from-srt-bedrock`
-- Verifique se o acesso ao Bedrock está habilitado
-- Verifique se o inference profile está correto
-- Verifique se o prompt personalizado (se usado) está no formato correto e no bucket correto
+1. **Região no CloudWatch (IMPORTANTE):** O projeto usa **us-east-2** (Ohio). No console AWS, o seletor de região fica no canto superior direito — troque para **us-east-2** para ver os log groups do meetup (`generate-summary-from-srt-bedrock`, `start-transcribe-on-s3-upload`). Se estiver em outra região (ex.: sa-east-1), verá apenas outros projetos (ex.: Site-Lambda-Function, loterias_api).
+2. **Log groups esperados:**
+   - Lambda Bedrock: `/aws/lambda/generate-summary-from-srt-bedrock` (logs da aplicação: `[INVOKE]`, `[MODEL]`, `[LLM]`, `[ERRO]`)
+   - Bedrock Model Invocation: `/aws/bedrock/model-invocation-logs` (logs nativos do Bedrock, configurados em Settings)
+3. **Model Access:** Em Bedrock > Model access, solicite acesso ao Claude Haiku 4.5 se ainda não tiver.
+4. **Inference profile:** Claude Haiku 4.5 usa `us.anthropic.claude-haiku-4-5-20251001-v1:0` automaticamente (já configurado na Lambda).
+5. **Debug:** Ative `OBSERVABILITY_TRACE=1` e `OBSERVABILITY_DEBUG=1` em `config/config.env`, rode `create-all.sh` e envie um vídeo novamente. Os logs detalhados aparecerão no CloudWatch.
+
+### AccessDeniedException (Claude Haiku 4.5 ou outro modelo)
+
+O Terraform inclui as permissões necessárias (Bedrock, Marketplace, GetInferenceProfile). Se o erro persistir:
+
+1. **Model Access (mais comum):** Em **Bedrock > Model access** (console AWS, região us-east-2), solicite acesso ao **Claude Haiku 4.5**. O status deve estar "Access granted" antes de usar. Pode levar alguns minutos.
+2. **SCP:** Se a conta está em AWS Organization, pode haver SCP bloqueando. O administrador precisa ajustar.
+3. **Redeploy:** Após alterar permissões no Terraform, execute `bash ./script/create-all.sh` para aplicar.
 
 ### Site não carrega
 

@@ -2,8 +2,10 @@
  * Config carregada em runtime de config.json (gerado no deploy).
  * Nenhum dado sensível deve ficar hardcoded no código-fonte.
  */
-let config = { identityPoolId: "", region: "us-east-2", videoBucket: "" };
+let config = { identityPoolId: "", region: "us-east-2", videoBucket: "", accessToken: "" };
 let s3 = null;
+
+const TOKEN_STORAGE_KEY = "meetup_access_token";
 
 // Inicializar Mermaid (securityLevel: 'loose' necessário para diagramas; HTML é sanitizado com DOMPurify)
 if (typeof mermaid !== 'undefined') {
@@ -83,9 +85,9 @@ async function loadModels() {
     modelSelect.innerHTML = '<option value="">Erro ao carregar modelos</option>';
     // Fallback: adicionar modelos padrão em caso de erro
     const fallbackModels = [
-      { id: "anthropic.claude-haiku-4-5-20251001-v1:0", name: "Claude Haiku 4.5" },
-      { id: "amazon.nova-lite-v1:0", name: "Amazon Nova Lite" },
-      { id: "deepseek.r1-v1:0", name: "DeepSeek R1" }
+      { id: "anthropic.claude-haiku-4-5-20251001-v1:0", temperature: 0.3, topP: 0.9, topK: 0, name: "Claude Haiku 4.5" },
+      { id: "amazon.nova-lite-v1:0", temperature: 0.3, topP: 0.9, topK: 0, name: "Amazon Nova Lite" },
+      { id: "deepseek.r1-v1:0", temperature: 0.5, topP: 0.9, topK: 0, name: "DeepSeek R1" }
     ];
     fallbackModels.forEach(model => {
       const option = document.createElement("option");
@@ -94,6 +96,60 @@ async function loadModels() {
       modelSelect.appendChild(option);
     });
     availableModels = fallbackModels;
+  }
+}
+
+function getTokenFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("token") || "";
+}
+
+function isTokenValid(entered, expected) {
+  return expected && entered && String(entered).trim() === String(expected).trim();
+}
+
+function showTokenGate() {
+  const gate = document.getElementById("tokenGate");
+  const container = document.querySelector(".container");
+  if (gate) gate.classList.remove("hidden");
+  if (container) container.classList.add("hidden");
+
+  const tokenInput = document.getElementById("tokenInput");
+  const tokenError = document.getElementById("tokenError");
+  const tokenSubmit = document.getElementById("tokenSubmit");
+
+  if (tokenSubmit) {
+    tokenSubmit.onclick = () => {
+      const token = tokenInput ? tokenInput.value.trim() : "";
+      if (tokenError) {
+        tokenError.classList.add("hidden");
+        tokenError.textContent = "";
+      }
+      if (!token) {
+        if (tokenError) {
+          tokenError.textContent = "Informe o token.";
+          tokenError.classList.remove("hidden");
+        }
+        return;
+      }
+      if (isTokenValid(token, config.accessToken)) {
+        sessionStorage.setItem(TOKEN_STORAGE_KEY, token);
+        gate.classList.add("hidden");
+        container.classList.remove("hidden");
+        window.history.replaceState({}, "", window.location.pathname);
+        runAppInit();
+      } else {
+        if (tokenError) {
+          tokenError.textContent = "Token inválido.";
+          tokenError.classList.remove("hidden");
+        }
+      }
+    };
+  }
+  if (tokenInput) {
+    tokenInput.onkeydown = (e) => {
+      if (e.key === "Enter") tokenSubmit && tokenSubmit.click();
+    };
   }
 }
 
@@ -121,6 +177,26 @@ async function init() {
     return;
   }
 
+  if (config.accessToken) {
+    const tokenFromUrl = getTokenFromUrl();
+    const tokenFromStorage = sessionStorage.getItem(TOKEN_STORAGE_KEY);
+    const validToken = tokenFromUrl || tokenFromStorage;
+    if (validToken && isTokenValid(validToken, config.accessToken)) {
+      if (tokenFromUrl) {
+        sessionStorage.setItem(TOKEN_STORAGE_KEY, tokenFromUrl);
+        window.history.replaceState({}, "", window.location.pathname);
+      }
+      runAppInit();
+      return;
+    }
+    showTokenGate();
+    return;
+  }
+
+  runAppInit();
+}
+
+async function runAppInit() {
   AWS.config.update({
     region: config.region,
     credentials: new AWS.CognitoIdentityCredentials({
@@ -201,26 +277,57 @@ uploadBtn.addEventListener("click", async () => {
     }
   }
 
-  uploadStatus.innerText = "⏳ Enviando vídeo...";
+  uploadStatus.innerText = "⏳ Verificando...";
   uploadStatus.style.color = "";
   uploadStatus.className = "status-text";
 
   try {
     // Garantir que as credenciais estão carregadas
     await AWS.config.credentials.getPromise();
-    
-    // Upload do vídeo
-    const videoParams = {
-      Bucket: config.videoBucket,
-      Key: videoPrefix + videoFile.name,
-      Body: videoFile,
-      ContentType: "video/mp4"
-    };
-    
-    await s3.upload(videoParams).promise();
-    
+
+    const videoKey = videoPrefix + videoFile.name;
     const baseName = videoFile.name.split(".").slice(0, -1).join(".");
-    
+    const canonicalSrtKey = srtPrefix + baseName + ".srt";
+
+    // Verificar se vídeo e legenda canônica já existem (legenda vinculada ao vídeo por base_name + ETag)
+    let videoExisted = false;
+    let subtitleValid = false;
+    try {
+      const videoHead = await s3.headObject({ Bucket: config.videoBucket, Key: videoKey }).promise();
+      videoExisted = true;
+      try {
+        await s3.headObject({ Bucket: config.videoBucket, Key: canonicalSrtKey }).promise();
+        const etagKey = srtPrefix + baseName + ".video-etag";
+        let storedEtag = "";
+        try {
+          const etagObj = await s3.getObject({ Bucket: config.videoBucket, Key: etagKey }).promise();
+          storedEtag = (etagObj.Body && etagObj.Body.toString()) ? etagObj.Body.toString().trim() : "";
+        } catch (_) {}
+        const currentEtag = (videoHead.ETag || "").replace(/"/g, "");
+        subtitleValid = storedEtag && currentEtag && storedEtag === currentEtag;
+      } catch (e) {
+        if (e.code !== "NotFound" && e.code !== "NoSuchKey") throw e;
+      }
+    } catch (e) {
+      if (e.code !== "NotFound" && e.code !== "NoSuchKey") throw e;
+    }
+
+    const skipTranscribe = videoExisted && subtitleValid;
+
+    if (videoExisted && !skipTranscribe) {
+      uploadStatus.innerText = "⏳ Vídeo já existe. Atualizando prompt/modelo e disparando transcrição...";
+    } else if (skipTranscribe) {
+      uploadStatus.innerText = "⏳ Vídeo e legenda já existem. Atualizando prompt/modelo e gerando resumo...";
+    } else {
+      uploadStatus.innerText = "⏳ Enviando vídeo...";
+      await s3.upload({
+        Bucket: config.videoBucket,
+        Key: videoKey,
+        Body: videoFile,
+        ContentType: "video/mp4"
+      }).promise();
+    }
+
     // Upload do prompt se fornecido
     if (promptFile) {
       const promptKey = promptPrefix + baseName + ".txt";
@@ -235,19 +342,60 @@ uploadBtn.addEventListener("click", async () => {
       await s3.upload(promptParams).promise();
     }
     
-    // Upload do modelo selecionado
-    const modelKey = modelPrefix + baseName + ".txt";
+    // Upload da config do modelo (id, temperature, topP, topK)
+    const modelConfig = availableModels.find(m => m.id === selectedModel) || {
+      id: selectedModel,
+      temperature: 0.3,
+      topP: 0.9,
+      topK: 0
+    };
+    const modelKey = modelPrefix + baseName + ".json";
     const modelParams = {
       Bucket: config.videoBucket,
       Key: modelKey,
-      Body: selectedModel,
-      ContentType: "text/plain"
+      Body: JSON.stringify({
+        id: modelConfig.id,
+        temperature: modelConfig.temperature ?? 0.3,
+        topP: modelConfig.topP ?? 0.9,
+        topK: modelConfig.topK ?? 0
+      }),
+      ContentType: "application/json"
     };
     
     await s3.upload(modelParams).promise();
-    
+
+    // Disparar pipeline conforme o caso
+    if (skipTranscribe) {
+      // Vídeo e legenda existem: copiar legenda para si mesma → EventBridge → Bedrock (pula Transcribe)
+      // MetadataDirective REPLACE com timestamp garante que S3 emita Object Created (reprocessar com outro modelo)
+      uploadStatus.innerText = "⏳ Disparando geração do resumo...";
+      const copySource = `${config.videoBucket}/${canonicalSrtKey}`;
+      await s3.copyObject({
+        Bucket: config.videoBucket,
+        Key: canonicalSrtKey,
+        CopySource: copySource,
+        MetadataDirective: "REPLACE",
+        ContentType: "text/plain; charset=utf-8",
+        Metadata: { "trigger": String(Date.now()) }
+      }).promise();
+    } else if (videoExisted) {
+      // Vídeo existe mas legenda não/inválida: copiar vídeo → EventBridge → Transcribe → Bedrock
+      uploadStatus.innerText = "⏳ Disparando transcrição e resumo...";
+      const copySource = `${config.videoBucket}/${videoKey}`;
+      await s3.copyObject({
+        Bucket: config.videoBucket,
+        Key: videoKey,
+        CopySource: copySource,
+        MetadataDirective: "COPY"
+      }).promise();
+    }
+
     // Mensagem de sucesso
-    if (promptFile) {
+    if (skipTranscribe) {
+      uploadStatus.innerText = "✅ Vídeo e legenda já existiam. Resumo sendo gerado com o modelo selecionado. Aguarde alguns minutos.";
+    } else if (videoExisted) {
+      uploadStatus.innerText = "✅ Vídeo já existia. Transcrição e resumo sendo gerados. Aguarde alguns minutos.";
+    } else if (promptFile) {
       uploadStatus.innerText = "✅ Upload concluído! Vídeo, prompt e modelo enviados. A transcrição será gerada em alguns minutos.";
     } else {
       uploadStatus.innerText = "✅ Upload concluído! Vídeo e modelo enviados. A transcrição será gerada em alguns minutos.";
@@ -263,16 +411,24 @@ uploadBtn.addEventListener("click", async () => {
     }
   } catch (err) {
     console.error("Erro no upload:", err);
+    const code = err.code || err.name || "";
+    const msg = err.message || "";
     let errorMsg = "❌ Erro no upload.";
     
-    if (err.code === "NetworkError" || err.message?.includes("Network")) {
-      errorMsg += " Verifique sua conexão.";
-    } else if (err.code === "AccessDenied" || err.statusCode === 403) {
+    if (code === "NetworkError" || code === "Failed to fetch" || msg.includes("Network") || msg.includes("fetch")) {
+      errorMsg += " Verifique sua conexão e CORS do bucket.";
+    } else if (code === "AccessDenied" || err.statusCode === 403) {
       errorMsg += " Sem permissão. Verifique as credenciais do Cognito.";
-    } else if (err.message) {
-      errorMsg += ` ${err.message}`;
+    } else if (code === "NotFound" || code === "NoSuchKey") {
+      errorMsg += " Arquivo não encontrado no bucket.";
+    } else if (code === "AccessControlListNotSupported") {
+      errorMsg += " Configuração do bucket incompatível.";
+    } else if (code === "InvalidAccessKeyId" || code === "CredentialsError") {
+      errorMsg += " Credenciais inválidas. Recarregue a página.";
+    } else if (msg) {
+      errorMsg += ` ${msg.substring(0, 80)}${msg.length > 80 ? "…" : ""}`;
     } else {
-      errorMsg += " Veja o console para mais detalhes.";
+      errorMsg += " Abra o console (F12) para detalhes.";
     }
     
     uploadStatus.innerText = errorMsg;

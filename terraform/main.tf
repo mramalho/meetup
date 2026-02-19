@@ -52,17 +52,25 @@ resource "aws_s3_bucket_public_access_block" "main_public_access" {
   restrict_public_buckets = true
 }
 
+locals {
+  cors_origins = concat(
+    [
+      "https://${var.domain_name}",
+      "http://${var.domain_name}",
+      "https://${aws_cloudfront_distribution.app_cdn.domain_name}"
+    ],
+    var.cors_extra_origins != "" ? [for o in split(",", var.cors_extra_origins) : trimspace(o)] : []
+  )
+}
+
 resource "aws_s3_bucket_cors_configuration" "main_cors" {
   bucket = data.aws_s3_bucket.main.id
 
   cors_rule {
     allowed_headers = ["*"]
-    allowed_methods = ["GET", "PUT", "POST", "DELETE"]
-    allowed_origins = [
-      "https://${var.domain_name}",
-      "https://${aws_cloudfront_distribution.app_cdn.domain_name}"
-    ]
-    expose_headers  = ["ETag"]
+    allowed_methods = ["GET", "PUT", "POST", "DELETE", "HEAD"]
+    allowed_origins = local.cors_origins
+    expose_headers  = ["ETag", "x-amz-request-id", "x-amz-id-2"]
     max_age_seconds = 3000
   }
 }
@@ -160,6 +168,18 @@ resource "aws_cognito_identity_pool_roles_attachment" "pool_roles" {
 ########################
 # LAMBDAS + IAM
 ########################
+
+# Log groups criados explicitamente para garantir que existam no CloudWatch
+# (a Lambda usa /aws/lambda/<nome> automaticamente; criar antes evita ausência do grupo)
+resource "aws_cloudwatch_log_group" "lambda_transcribe" {
+  name              = "/aws/lambda/start-transcribe-on-s3-upload"
+  retention_in_days  = var.log_retention_days
+}
+
+resource "aws_cloudwatch_log_group" "lambda_bedrock_summary" {
+  name              = "/aws/lambda/generate-summary-from-srt-bedrock"
+  retention_in_days  = var.log_retention_days
+}
 
 # Lambda 1: inicia Transcribe quando vídeo chegar no S3
 resource "aws_iam_role" "lambda_transcribe_role" {
@@ -266,7 +286,8 @@ resource "aws_iam_role_policy" "lambda_bedrock_summary_policy" {
         Resource = [
           "${data.aws_s3_bucket.main.arn}/model/transcribe/*",
           "${data.aws_s3_bucket.main.arn}/model/prompts/*",
-          "${data.aws_s3_bucket.main.arn}/model/models/*"
+          "${data.aws_s3_bucket.main.arn}/model/models/*",
+          "${data.aws_s3_bucket.main.arn}/model/video/*"
         ]
       },
       {
@@ -274,10 +295,10 @@ resource "aws_iam_role_policy" "lambda_bedrock_summary_policy" {
         Action   = ["s3:PutObject"],
         Resource = "${data.aws_s3_bucket.main.arn}/model/resumo/*"
       },
-      # Permite atualizar .srt com cabeçalho do modelo LLM
+      # Permite atualizar .srt com cabeçalho do modelo LLM e remover duplicatas (meetup-*-timestamp.srt)
       {
         Effect   = "Allow",
-        Action   = ["s3:PutObject"],
+        Action   = ["s3:PutObject", "s3:DeleteObject"],
         Resource = "${data.aws_s3_bucket.main.arn}/model/transcribe/*"
       },
       {
@@ -287,6 +308,25 @@ resource "aws_iam_role_policy" "lambda_bedrock_summary_policy" {
           "bedrock:InvokeModelWithResponseStream",
           "bedrock:Converse",
           "bedrock:ConverseStream"
+        ],
+        Resource = "*"
+      },
+      # Necessário para inference profiles (ex.: us.anthropic.claude-haiku-4-5-20251001-v1:0)
+      {
+        Effect   = "Allow",
+        Action   = ["bedrock:GetInferenceProfile", "bedrock:ListInferenceProfiles"],
+        Resource = [
+          "arn:aws:bedrock:*:*:inference-profile/*",
+          "arn:aws:bedrock:*:*:application-inference-profile/*"
+        ]
+      },
+      # Permissões AWS Marketplace necessárias para modelos Bedrock (ex.: Claude, DeepSeek)
+      {
+        Effect   = "Allow",
+        Action   = [
+          "aws-marketplace:ViewSubscriptions",
+          "aws-marketplace:Subscribe",
+          "aws-marketplace:Unsubscribe"
         ],
         Resource = "*"
       },
@@ -404,49 +444,38 @@ resource "aws_lambda_permission" "allow_eventbridge_invoke_bedrock_summary" {
 
 ########################
 # BEDROCK MODEL INVOCATION LOGGING (análises posteriores, auditoria)
-# Logs de prompts/respostas enviados para S3 para compliance e debugging
+# CloudWatch Logs + S3 para dados >100KB (transcrições longas não aparecem sem isso)
 ########################
 
+data "aws_caller_identity" "current" {}
+
 locals {
-  bedrock_logs_bucket = coalesce(var.bedrock_logs_bucket_name, "${var.bucket_name}-bedrock-logs")
+  bedrock_large_data_bucket = "${var.bucket_name}-bedrock-logs"
 }
 
-resource "aws_s3_bucket" "bedrock_logs" {
+resource "aws_s3_bucket" "bedrock_large_data" {
   provider = aws.bedrock
 
-  bucket        = local.bedrock_logs_bucket
-  force_destroy = true # Permite terraform destroy mesmo com objetos (logs do Bedrock)
+  bucket        = local.bedrock_large_data_bucket
+  force_destroy = true
 }
 
-resource "aws_s3_bucket_ownership_controls" "bedrock_logs" {
+resource "aws_s3_bucket_ownership_controls" "bedrock_large_data" {
   provider = aws.bedrock
 
-  bucket = aws_s3_bucket.bedrock_logs.id
+  bucket = aws_s3_bucket.bedrock_large_data.id
 
   rule {
     object_ownership = "BucketOwnerEnforced"
   }
 
-  depends_on = [aws_s3_bucket.bedrock_logs]
+  depends_on = [aws_s3_bucket.bedrock_large_data]
 }
 
-resource "aws_s3_bucket_server_side_encryption_configuration" "bedrock_logs" {
+resource "aws_s3_bucket_public_access_block" "bedrock_large_data" {
   provider = aws.bedrock
 
-  bucket = aws_s3_bucket.bedrock_logs.id
-
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
-    }
-    bucket_key_enabled = true
-  }
-}
-
-resource "aws_s3_bucket_public_access_block" "bedrock_logs" {
-  provider = aws.bedrock
-
-  bucket = aws_s3_bucket.bedrock_logs.id
+  bucket = aws_s3_bucket.bedrock_large_data.id
 
   block_public_acls      = true
   block_public_policy    = true
@@ -454,14 +483,14 @@ resource "aws_s3_bucket_public_access_block" "bedrock_logs" {
   restrict_public_buckets = true
 }
 
-resource "aws_s3_bucket_policy" "bedrock_logs" {
+resource "aws_s3_bucket_policy" "bedrock_large_data" {
   provider = aws.bedrock
 
-  bucket = aws_s3_bucket.bedrock_logs.id
+  bucket = aws_s3_bucket.bedrock_large_data.id
 
   depends_on = [
-    aws_s3_bucket_public_access_block.bedrock_logs,
-    aws_s3_bucket_ownership_controls.bedrock_logs,
+    aws_s3_bucket_public_access_block.bedrock_large_data,
+    aws_s3_bucket_ownership_controls.bedrock_large_data,
   ]
 
   policy = jsonencode({
@@ -474,7 +503,7 @@ resource "aws_s3_bucket_policy" "bedrock_logs" {
           Service = "bedrock.amazonaws.com"
         },
         Action   = ["s3:PutObject"],
-        Resource = "${aws_s3_bucket.bedrock_logs.arn}/bedrock/AWSLogs/${data.aws_caller_identity.current.account_id}/BedrockModelInvocationLogs/*",
+        Resource = "${aws_s3_bucket.bedrock_large_data.arn}/bedrock/AWSLogs/${data.aws_caller_identity.current.account_id}/BedrockModelInvocationLogs/*",
         Condition = {
           StringEquals = {
             "aws:SourceAccount" = data.aws_caller_identity.current.account_id
@@ -488,7 +517,60 @@ resource "aws_s3_bucket_policy" "bedrock_logs" {
   })
 }
 
-data "aws_caller_identity" "current" {}
+resource "aws_cloudwatch_log_group" "bedrock_invocation_logs" {
+  provider = aws.bedrock
+
+  name             = "/aws/bedrock/model-invocation-logs"
+  retention_in_days = var.bedrock_logs_retention_days
+}
+
+resource "aws_iam_role" "bedrock_logging" {
+  provider = aws.bedrock
+
+  name = "bedrock-model-invocation-logging-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Principal = {
+          Service = "bedrock.amazonaws.com"
+        },
+        Action = "sts:AssumeRole",
+        Condition = {
+          StringEquals = {
+            "aws:SourceAccount" = data.aws_caller_identity.current.account_id
+          },
+          ArnLike = {
+            "aws:SourceArn" = "arn:aws:bedrock:${var.bedrock_region}:${data.aws_caller_identity.current.account_id}:*"
+          }
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "bedrock_logging" {
+  provider = aws.bedrock
+
+  name   = "bedrock-logging-policy"
+  role   = aws_iam_role.bedrock_logging.id
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Action = [
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ],
+        Resource = "${aws_cloudwatch_log_group.bedrock_invocation_logs.arn}:log-stream:aws/bedrock/modelinvocations"
+      }
+    ]
+  })
+}
 
 resource "aws_bedrock_model_invocation_logging_configuration" "main" {
   provider = aws.bedrock
@@ -497,11 +579,17 @@ resource "aws_bedrock_model_invocation_logging_configuration" "main" {
     text_data_delivery_enabled      = true
     image_data_delivery_enabled     = false
     embedding_data_delivery_enabled = false
-    video_data_delivery_enabled      = false
+    video_data_delivery_enabled     = false
 
-    s3_config {
-      bucket_name = aws_s3_bucket.bedrock_logs.id
-      key_prefix  = "bedrock"
+    cloudwatch_config {
+      log_group_name = aws_cloudwatch_log_group.bedrock_invocation_logs.name
+      role_arn       = aws_iam_role.bedrock_logging.arn
+
+      # Dados >100KB (transcrições longas) vão para S3; sem isso, nada é logado
+      large_data_delivery_s3_config {
+        bucket_name = aws_s3_bucket.bedrock_large_data.id
+        key_prefix  = "bedrock"
+      }
     }
   }
 }

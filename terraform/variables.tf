@@ -24,6 +24,12 @@ variable "hosted_zone_id" {
   type        = string
 }
 
+variable "cors_extra_origins" {
+  description = "Origens extras para CORS do S3 (separadas por vírgula). Ex: http://localhost:8080,http://127.0.0.1:8080 para desenvolvimento local."
+  type        = string
+  default     = ""
+}
+
 variable "bedrock_region" {
   description = "Região usada para invocar o Bedrock"
   type        = string
@@ -44,10 +50,16 @@ variable "bedrock_inference_profile" {
   default     = ""
 }
 
-variable "bedrock_logs_bucket_name" {
-  description = "Nome do bucket S3 para logs de invocação do Bedrock (análises posteriores, auditoria). Deve ser único globalmente e estar na mesma região do Bedrock."
-  type        = string
-  default     = ""
+variable "log_retention_days" {
+  description = "Dias de retenção dos logs das Lambdas no CloudWatch (0 = retenção indefinida)"
+  type        = number
+  default     = 30
+}
+
+variable "bedrock_logs_retention_days" {
+  description = "Dias de retenção dos logs do Bedrock no CloudWatch (0 = retenção indefinida)"
+  type        = number
+  default     = 30
 }
 
 variable "observability_debug" {

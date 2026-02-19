@@ -1,1 +1,1 @@
-{"identityPoolId":"REPLACE_BY_TERRAFORM_OUTPUT","region":"us-east-2","videoBucket":"REPLACE_BY_TERRAFORM_OUTPUT"}
+{"identityPoolId":"REPLACE_BY_TERRAFORM_OUTPUT","region":"us-east-2","videoBucket":"REPLACE_BY_TERRAFORM_OUTPUT","accessToken":""}

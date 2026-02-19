@@ -153,48 +153,112 @@ def _combine_prompts(guardrails: str, custom_prompt: str) -> str:
     )
 
 
-def get_selected_model(base_name: str, bucket: str) -> str:
+def get_selected_model_config(base_name: str, bucket: str) -> dict:
     """
-    Tenta ler o modelo selecionado do S3.
-    Se não encontrar, retorna o modelo padrão da variável de ambiente.
+    Tenta ler a config do modelo do S3 (model/models/{base_name}.json ou .txt).
+    Retorna dict com id, temperature, topP, topK (valores opcionais com defaults).
     """
-    model_key = f"{MODEL_PREFIX}models/{base_name}.txt"
-    
+    # 1. Tentar .json (config completa: id, temperature, topP, topK)
+    json_key = f"{MODEL_PREFIX}models/{base_name}.json"
     try:
-        _log(f"Tentando ler modelo selecionado de s3://{bucket}/{model_key}")
-        response = s3_client.get_object(Bucket=bucket, Key=model_key)
+        response = s3_client.get_object(Bucket=bucket, Key=json_key)
+        data = json.loads(response["Body"].read().decode("utf-8", errors="ignore"))
+        cfg = {
+            "id": data.get("id", "").strip() or MODEL_ID,
+            "temperature": float(data.get("temperature", 0.3)),
+            "topP": float(data.get("topP", 0.9)),
+            "topK": int(data.get("topK", 0)) if data.get("topK") is not None else 0,
+        }
+        _log(f"Modelo config lida de {json_key}: id={cfg['id']} temp={cfg['temperature']} topP={cfg['topP']}")
+        return cfg
+    except ClientError as e:
+        if e.response.get("Error", {}).get("Code") != "NoSuchKey":
+            _log(f"Erro ao ler {json_key}: {e}", always=True)
+    except (json.JSONDecodeError, ValueError, TypeError) as e:
+        _log(f"JSON inválido em {json_key}: {e}", always=True)
+
+    # 2. Fallback: .txt (apenas id)
+    txt_key = f"{MODEL_PREFIX}models/{base_name}.txt"
+    try:
+        response = s3_client.get_object(Bucket=bucket, Key=txt_key)
         model_id = response["Body"].read().decode("utf-8", errors="ignore").strip()
-        _log(f"Modelo selecionado encontrado: {model_id}")
-        return model_id
+        _log(f"Modelo id lido de {txt_key}: {model_id}")
+        return {"id": model_id or MODEL_ID, "temperature": 0.3, "topP": 0.9, "topK": 0}
     except ClientError as e:
         error_code = e.response.get("Error", {}).get("Code", "")
         if error_code == "NoSuchKey":
-            _log(f"Modelo selecionado não encontrado em {model_key}, usando modelo padrão: {MODEL_ID}")
-        elif error_code == "AccessDenied":
-            _log(f"Sem permissão para ler {model_key}, usando modelo padrão: {MODEL_ID}", always=True)
+            _log(f"Modelo não encontrado em {json_key} nem {txt_key}, usando padrão: {MODEL_ID}")
         else:
-            _log(f"Erro ao ler modelo selecionado: {e}, usando modelo padrão: {MODEL_ID}", always=True)
-    
-    return MODEL_ID
+            _log(f"Erro ao ler modelo: {e}, usando padrão: {MODEL_ID}", always=True)
+
+    return {"id": MODEL_ID, "temperature": 0.3, "topP": 0.9, "topK": 0}
+
+
+def get_model_slug(model_id: str) -> str:
+    """
+    Retorna slug curto do modelo para o nome do arquivo de resumo.
+    Ex: CommunityDayCPS-haiku45.md, CommunityDayCPS-Novalt.md
+    """
+    if not model_id:
+        return "default"
+    mid = model_id.lower()
+    if "claude-haiku" in mid or "haiku-4-5" in mid:
+        return "haiku45"
+    if "nova" in mid and "lite" in mid:
+        return "Novalt"
+    if "deepseek" in mid or "r1" in mid:
+        return "DSeekR1"
+    if "opus" in mid:
+        return "Opus"
+    if "sonnet" in mid:
+        return "Sonnet"
+    # Fallback: primeira parte do model_id (ex: anthropic -> anthropic)
+    parts = model_id.split(".")[:2]
+    return "-".join(parts).replace(":", "-")[:20] if parts else "default"
 
 
 def get_inference_profile_for_model(model_id: str):
     """
     Retorna o inference profile apropriado para o modelo.
-    Alguns modelos (Nova, DeepSeek) exigem inference profile em vez de on-demand.
+    Claude Haiku 4.5, Nova, DeepSeek e outros exigem inference profile para cross-region.
     """
     profiles = {
         "deepseek.r1-v1:0": "us.deepseek.r1-v1:0",
         "amazon.nova-2-lite-v1:0": "us.amazon.nova-2-lite-v1:0",
+        # Claude Haiku 4.5: inference profile para cross-region (global. já é profile, usa direto)
+        "anthropic.claude-haiku-4-5-20251001-v1:0": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
     }
     return profiles.get(model_id)
 
 
-def call_bedrock_nova(transcript_text: str, system_prompt: str, model_id: str, inference_profile: str = None) -> str:
+def get_inference_config_for_model(model_id: str, params: dict = None) -> dict:
     """
-    Chama o Amazon Bedrock para gerar
-    um resumo detalhado em Markdown.
+    Retorna inferenceConfig adequado ao modelo.
+    params: dict opcional com temperature, topP, topK (do models.json).
+    Claude Haiku 4.5 não aceita temperature e topP juntos; usar apenas temperature.
     """
+    p = params or {}
+    temp = float(p.get("temperature", 0.3))
+    top_p = float(p.get("topP", 0.9))
+    top_k = int(p.get("topK", 0)) if p.get("topK") is not None else 0
+
+    cfg = {"maxTokens": 2048, "temperature": temp}
+    # Claude Haiku 4.5: apenas temperature (não aceita topP junto)
+    if model_id and "claude-haiku-4-5" in model_id:
+        return cfg
+    if top_p is not None and top_p > 0:
+        cfg["topP"] = top_p
+    if top_k is not None and top_k > 0:
+        cfg["topK"] = top_k
+    return cfg
+
+
+def call_bedrock_nova(transcript_text: str, system_prompt: str, model_config: dict, inference_profile: str = None) -> str:
+    """
+    Chama o Amazon Bedrock para gerar um resumo detalhado em Markdown.
+    model_config: dict com id, temperature, topP, topK.
+    """
+    model_id = model_config.get("id", "")
     user_message = (
         "Abaixo está a transcrição (já limpa) de um vídeo. "
         "Gere um resumo detalhado em Markdown, conforme as regras.\n\n"
@@ -211,8 +275,11 @@ def call_bedrock_nova(transcript_text: str, system_prompt: str, model_id: str, i
         # Caso contrário, use o model_id diretamente
         model_id_to_use = inference_profile if inference_profile else model_id
         
+        # Log incondicional para auditoria no CloudWatch (modelo e tamanho do input)
+        print(f"[LLM] Chamando Bedrock: modelId={model_id_to_use} input_chars={len(transcript_text)}")
         _log(f"Usando modelo: {model_id_to_use} (model_id={model_id}, inference_profile={inference_profile})")
         
+        inference_config = get_inference_config_for_model(model_id, model_config)
         response = bedrock_client.converse(
             modelId=model_id_to_use,
             system=[{"text": system_prompt}],
@@ -222,23 +289,49 @@ def call_bedrock_nova(transcript_text: str, system_prompt: str, model_id: str, i
                     "content": [{"text": user_message}],
                 }
             ],
-            inferenceConfig={
-                "maxTokens": 2048,
-                "temperature": 0.3,
-                "topP": 0.9,
-            },
+            inferenceConfig=inference_config,
         )
 
         content_blocks = response["output"]["message"]["content"]
+        usage = response.get("usage", {})
+        input_tok = usage.get("inputTokens", "?")
+        output_tok = usage.get("outputTokens", "?")
+        total_tok = usage.get("totalTokens", "?")
         # pego o primeiro bloco de texto
         for block in content_blocks:
             if "text" in block:
-                return block["text"]
+                output_text = block["text"]
+                # Log incondicional: sucesso da chamada LLM + tokens (auditoria CloudWatch)
+                print(f"[LLM] Bedrock OK: output_chars={len(output_text)} inputTokens={input_tok} outputTokens={output_tok} totalTokens={total_tok}")
+                return output_text
 
         raise RuntimeError("Resposta do modelo não contém texto.")
     except ClientError as e:
+        err = e.response.get("Error", {})
+        err_code = err.get("Code", "Unknown")
+        err_msg = err.get("Message", str(e))
+        # Fallback: se AccessDenied com inference profile, tenta modelo base (pode funcionar em algumas regiões)
+        if err_code == "AccessDeniedException" and inference_profile and model_id != model_id_to_use:
+            print(f"[LLM] AccessDenied com inference profile. Tentando modelo base: {model_id}")
+            try:
+                inference_config = get_inference_config_for_model(model_id, model_config)
+                response = bedrock_client.converse(
+                    modelId=model_id,
+                    system=[{"text": system_prompt}],
+                    messages=[{"role": "user", "content": [{"text": user_message}]}],
+                    inferenceConfig=inference_config,
+                )
+                content_blocks = response["output"]["message"]["content"]
+                for block in content_blocks:
+                    if "text" in block:
+                        output_text = block["text"]
+                        print(f"[LLM] Bedrock OK (modelo base): output_chars={len(output_text)}")
+                        return output_text
+            except ClientError:
+                pass  # Mantém o erro original
+        print(f"[ERRO] Bedrock: code={err_code} message={err_msg}")
         _log(f"Erro ao chamar Bedrock: {e}", always=True)
-        raise
+        raise e
 
 
 def lambda_handler(event, context):
@@ -293,11 +386,13 @@ def lambda_handler(event, context):
     _log(f"Nome base do vídeo extraído: {video_base_name} (de {srt_filename})")
     system_prompt = get_system_prompt(video_base_name, bucket)
     
-    # Obtém o modelo selecionado (ou usa o padrão)
-    selected_model_id = get_selected_model(video_base_name, bucket)
+    # Obtém a config do modelo (id, temperature, topP, topK)
+    model_config = get_selected_model_config(video_base_name, bucket)
+    selected_model_id = model_config["id"]
     selected_inference_profile = get_inference_profile_for_model(selected_model_id)
-    
-    summary_md = call_bedrock_nova(plain_text, system_prompt, selected_model_id, selected_inference_profile)
+    print(f"[MODEL] Usando modelo: {selected_model_id} (inference_profile={selected_inference_profile}) temp={model_config.get('temperature')} topP={model_config.get('topP')}")
+
+    summary_md = call_bedrock_nova(plain_text, system_prompt, model_config, selected_inference_profile)
 
     # Cabeçalho com modelo LLM utilizado (início do arquivo)
     model_header = f"> *Modelo LLM: {selected_model_id}*\n\n"
@@ -324,9 +419,49 @@ def lambda_handler(event, context):
         _log(f"Erro ao atualizar legenda com cabeçalho: {e}", always=True)
         # Não falha o job - o resumo é o principal
 
-    # Mesma base do nome do arquivo .srt (usa o nome completo do .srt para o output)
-    srt_base_name = key.split("/")[-1].rsplit(".", 1)[0]
-    output_key = f"{OUTPUT_PREFIX}{srt_base_name}.md"
+    # Legenda canônica: model/transcribe/{video_base_name}.srt (relaciona legenda ao vídeo)
+    # Arquivo .video-etag armazena o ETag do vídeo no momento da transcrição (para validar se legenda ainda corresponde)
+    canonical_srt_key = f"{MODEL_PREFIX}transcribe/{video_base_name}.srt"
+    video_key = f"{MODEL_PREFIX}video/{video_base_name}.mp4"
+    if key != canonical_srt_key:
+        try:
+            s3_client.put_object(
+                Bucket=bucket,
+                Key=canonical_srt_key,
+                Body=srt_with_header.encode("utf-8"),
+                ContentType="text/plain; charset=utf-8",
+            )
+            _log(f"Legenda canônica criada em s3://{bucket}/{canonical_srt_key}")
+            # Remove o arquivo original (meetup-*-timestamp.srt) para evitar duplicata na listagem
+            try:
+                s3_client.delete_object(Bucket=bucket, Key=key)
+                _log(f"Arquivo original removido: s3://{bucket}/{key}")
+            except ClientError as e:
+                _log(f"Erro ao remover arquivo original (não crítico): {e}")
+            # Armazena ETag do vídeo para o frontend validar se a legenda ainda corresponde
+            try:
+                video_head = s3_client.head_object(Bucket=bucket, Key=video_key)
+                video_etag = video_head.get("ETag", "").strip('"')
+                etag_key = f"{MODEL_PREFIX}transcribe/{video_base_name}.video-etag"
+                s3_client.put_object(
+                    Bucket=bucket,
+                    Key=etag_key,
+                    Body=video_etag.encode("utf-8"),
+                    ContentType="text/plain",
+                )
+                _log(f"ETag do vídeo armazenado em s3://{bucket}/{etag_key}")
+            except ClientError:
+                pass  # Vídeo pode ter sido removido; não falha o job
+        except ClientError as e:
+            _log(f"Erro ao criar legenda canônica: {e}", always=True)
+
+    # Output do resumo: {video_base_name}-{model_slug}.md (permite múltiplos resumos por modelo)
+    model_slug = get_model_slug(selected_model_id)
+    output_key = f"{OUTPUT_PREFIX}{video_base_name}-{model_slug}.md"
+
+    if not OUTPUT_BUCKET:
+        print("[ERRO] SUMMARY_OUTPUT_BUCKET não configurado. Verifique as variáveis de ambiente da Lambda.")
+        raise RuntimeError("SUMMARY_OUTPUT_BUCKET não configurado")
 
     _log(f"Gravando resumo em s3://{OUTPUT_BUCKET}/{output_key}", always=True)
 

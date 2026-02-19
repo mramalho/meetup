@@ -35,10 +35,10 @@ Este documento registra as falhas identificadas e as medidas aplicadas.
 
 ## ✅ Model Invocation Logging (Bedrock)
 
-- **Configuração**: Logs de invocações do Bedrock enviados para S3 para análises posteriores, auditoria e compliance.
-- **Destino**: Bucket S3 dedicado (`{bucket_name}-bedrock-logs` ou `BEDROCK_LOGS_BUCKET_NAME` customizado).
-- **Dados**: Prompts e respostas em texto (JSON gzipped), metadata de invocação.
-- **Terraform**: `aws_bedrock_model_invocation_logging_configuration` + bucket com política para `bedrock.amazonaws.com`.
+- **Configuração**: Logs de invocações do Bedrock enviados para CloudWatch Logs para análises posteriores, auditoria e compliance.
+- **Destino**: Log group `/aws/bedrock/model-invocation-logs` no CloudWatch.
+- **Dados**: Prompts e respostas em texto (JSON), metadata de invocação.
+- **Terraform**: `aws_bedrock_model_invocation_logging_configuration` + CloudWatch Log Group + IAM role para `bedrock.amazonaws.com`.
 
 ## ⚠️ Recomendações Adicionais
 

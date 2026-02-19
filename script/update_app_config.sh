@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Gera config/config.json com identity_pool_id, region e bucket_name a partir dos outputs do Terraform.
+# Gera config/config.json com identity_pool_id, region, bucket_name e accessToken a partir dos outputs do Terraform e config.env.
 # O app.js carrega config.json em runtime (copiado para app/ no deploy).
 set -e
 
@@ -14,6 +14,14 @@ BUCKET_NAME=$(terraform output -raw bucket_name 2>/dev/null || echo "")
 AWS_REGION=$(terraform output -raw aws_region 2>/dev/null || echo "")
 cd "${ROOT_DIR}"
 
+# Carregar ACCESS_TOKEN de config.env se existir
+if [ -f "${CONFIG_DIR}/config.env" ]; then
+  set -a
+  source "${CONFIG_DIR}/config.env"
+  set +a
+fi
+ACCESS_TOKEN="${ACCESS_TOKEN:-}"
+
 if [ -z "$IDENTITY_POOL_ID" ] && [ -z "$BUCKET_NAME" ]; then
   echo "⚠️  Nenhum output do Terraform encontrado. Execute 'terraform apply' antes."
   exit 0
@@ -24,13 +32,15 @@ if [ -z "$AWS_REGION" ] || [[ "$AWS_REGION" == *"aws_region"* ]]; then
   AWS_REGION="us-east-2"
 fi
 
+# accessToken: vazio = acesso livre; preenchido = exige token para acessar
 mkdir -p "${CONFIG_DIR}"
 cat > "$CONFIG_JSON" << EOF
 {
   "identityPoolId": "${IDENTITY_POOL_ID}",
   "region": "${AWS_REGION}",
-  "videoBucket": "${BUCKET_NAME}"
+  "videoBucket": "${BUCKET_NAME}",
+  "accessToken": "${ACCESS_TOKEN}"
 }
 EOF
 
-echo "✅ config.json gerado com identityPoolId, region e videoBucket."
+echo "✅ config.json gerado com identityPoolId, region, videoBucket e accessToken."
