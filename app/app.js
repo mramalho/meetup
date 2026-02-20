@@ -1,6 +1,14 @@
 /**
  * Config carregada em runtime de config.json (gerado no deploy).
  * Nenhum dado sensível deve ficar hardcoded no código-fonte.
+ *
+ * Dois mecanismos distintos:
+ * 1) accessToken: controle opcional de quem pode abrir a página (comparação client-side;
+ *    valor em config; ?token= na URL ou campo na tela). Não substitui o Cognito.
+ * 2) Cognito Identity Pool: obtém credenciais temporárias AWS para o navegador acessar
+ *    o S3 (upload, listagem, download, exclusão). Sem Cognito o front não teria como
+ *    chamar o S3 de forma segura (sem expor chaves). O token só decide se a UI é exibida;
+ *    o Cognito é quem autoriza as chamadas ao bucket.
  */
 let config = { identityPoolId: "", region: "us-east-2", videoBucket: "", accessToken: "" };
 let s3 = null;
