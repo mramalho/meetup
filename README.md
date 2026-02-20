@@ -160,7 +160,7 @@ sequenceDiagram
 
 ### Infraestrutura AWS
 
-- **S3 Bucket único** (`var.bucket_name`):
+- **S3 Bucket único** (`BUCKET_NAME` em `config/config.env` = `var.bucket_name` no Terraform):
   - `app/`: Frontend estático
   - `model/`: Vídeos, transcrições, resumos, prompts e config do modelo
     - `model/video/`: Arquivos de vídeo `.mp4`
@@ -168,14 +168,15 @@ sequenceDiagram
     - `model/resumo/`: Resumos `.md` (um por modelo: `{base}-{model_slug}.md`)
     - `model/prompts/`: Prompts personalizados `.txt` (opcional)
     - `model/models/`: Config do modelo por vídeo — JSON com `id`, `temperature`, `topP`, `topK` (ou `.txt` apenas com id)
+  - `bedrock/`: Logs do Bedrock (dados >100KB de Model Invocation Logging)
   - `tfvars/`: State do Terraform
 - **CloudFront**: CDN para distribuição do frontend
 - **Route53**: DNS para domínio personalizado
 - **ACM**: Certificado SSL/TLS
 - **Cognito Identity Pool**: Autenticação para acesso ao S3
 - **EventBridge**: Orquestração de eventos
-- **Log groups (Terraform)**: Criados explicitamente para as duas Lambdas (`/aws/lambda/start-transcribe-on-s3-upload`, `/aws/lambda/generate-summary-from-srt-bedrock`) com retenção configurável (`log_retention_days`)
-- **Bedrock Model Invocation Logging**: Configurado no Terraform — CloudWatch (`/aws/bedrock/model-invocation-logs`) e S3 para dados >100KB (bucket auxiliar)
+- **Log groups (Terraform)**: Criados explicitamente para as duas Lambdas (`/aws/lambda/start-transcribe-on-s3-upload`, `/aws/lambda/generate-summary-from-srt-bedrock`) e para o Bedrock (`/aws/bedrock/model-invocation-logs`), com retenção configurável: `LOG_RETENTION_DAYS` (Lambdas) e `BEDROCK_LOGS_RETENTION_DAYS` em `config/config.env`; **0 = nunca expirar** (a AWS não aceita 0 — o Terraform omite a política nesse caso).
+- **Bedrock Model Invocation Logging**: Configurado no Terraform — CloudWatch (`/aws/bedrock/model-invocation-logs`) e S3 para dados >100KB (prefixo `bedrock/` no mesmo bucket `BUCKET_NAME`)
 - **IAM**: Políticas de permissão
 
 ## 📋 Requisitos
@@ -289,7 +290,7 @@ Edite `config/config.env` e defina pelo menos:
 - `BUCKET_NAME` – nome do bucket S3 (globalmente único)
 - `HOSTED_ZONE_ID` – ID da hosted zone no Route53 (ou deixe vazio para descoberta automática)
 
-Opcional: `ACCESS_TOKEN` (vazio = acesso livre; preenchido = exige token na URL `?token=...` ou na tela de acesso), `CREATE_ACM=1`, `CREATE_IAM_USER=0`, variáveis de Bedrock e observabilidade. Veja `config/config.env.example` para todas as opções.
+Opcional: `ACCESS_TOKEN` (vazio = acesso livre; preenchido = exige token na URL `?token=...` ou na tela de acesso), `LOG_RETENTION_DAYS`, `BEDROCK_LOGS_RETENTION_DAYS` (0 = nunca expirar), `CREATE_ACM=1`, `CREATE_IAM_USER=0`, variáveis de Bedrock e observabilidade. Veja `config/config.env.example` para todas as opções.
 
 ### 1. Pré-requisitos AWS (opcional: scripts com AWS CLI)
 
@@ -330,7 +331,8 @@ hosted_zone_id     = "Z1234567890ABC"     # ID da hosted zone no Route53
 bedrock_region            = "us-east-2"
 bedrock_model_id          = "anthropic.claude-haiku-4-5-20251001-v1:0"
 bedrock_inference_profile = ""   # Preencher para DeepSeek R1: "us.deepseek.r1-v1:0"
-bedrock_logs_retention_days = 30 # Retenção dos logs do Bedrock no CloudWatch (dias). 0 = indefinido
+log_retention_days     = 30   # Lambdas (0 = nunca expirar)
+bedrock_logs_retention_days = 30   # Bedrock (0 = nunca expirar)
 ```
 
 ### 3. Configuração do Frontend

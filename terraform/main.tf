@@ -171,14 +171,17 @@ resource "aws_cognito_identity_pool_roles_attachment" "pool_roles" {
 
 # Log groups criados explicitamente para garantir que existam no CloudWatch
 # (a Lambda usa /aws/lambda/<nome> automaticamente; criar antes evita ausência do grupo)
+# retention_in_days: só define se > 0; 0 = nunca expirar (AWS não aceita 0, omitir = sem política)
 resource "aws_cloudwatch_log_group" "lambda_transcribe" {
-  name              = "/aws/lambda/start-transcribe-on-s3-upload"
-  retention_in_days  = var.log_retention_days
+  name = "/aws/lambda/start-transcribe-on-s3-upload"
+
+  retention_in_days = var.log_retention_days > 0 ? var.log_retention_days : null
 }
 
 resource "aws_cloudwatch_log_group" "lambda_bedrock_summary" {
-  name              = "/aws/lambda/generate-summary-from-srt-bedrock"
-  retention_in_days  = var.log_retention_days
+  name = "/aws/lambda/generate-summary-from-srt-bedrock"
+
+  retention_in_days = var.log_retention_days > 0 ? var.log_retention_days : null
 }
 
 # Lambda 1: inicia Transcribe quando vídeo chegar no S3
@@ -449,79 +452,15 @@ resource "aws_lambda_permission" "allow_eventbridge_invoke_bedrock_summary" {
 
 data "aws_caller_identity" "current" {}
 
-locals {
-  bedrock_large_data_bucket = "${var.bucket_name}-bedrock-logs"
-}
+# Logs do Bedrock (dados >100KB) vão para o mesmo bucket (BUCKET_NAME), prefixo bedrock/
+# A policy do bucket principal está em aws_s3_bucket_policy.main_cloudfront (Statement AmazonBedrockLogsWrite).
 
-resource "aws_s3_bucket" "bedrock_large_data" {
-  provider = aws.bedrock
-
-  bucket        = local.bedrock_large_data_bucket
-  force_destroy = true
-}
-
-resource "aws_s3_bucket_ownership_controls" "bedrock_large_data" {
-  provider = aws.bedrock
-
-  bucket = aws_s3_bucket.bedrock_large_data.id
-
-  rule {
-    object_ownership = "BucketOwnerEnforced"
-  }
-
-  depends_on = [aws_s3_bucket.bedrock_large_data]
-}
-
-resource "aws_s3_bucket_public_access_block" "bedrock_large_data" {
-  provider = aws.bedrock
-
-  bucket = aws_s3_bucket.bedrock_large_data.id
-
-  block_public_acls      = true
-  block_public_policy    = true
-  ignore_public_acls     = true
-  restrict_public_buckets = true
-}
-
-resource "aws_s3_bucket_policy" "bedrock_large_data" {
-  provider = aws.bedrock
-
-  bucket = aws_s3_bucket.bedrock_large_data.id
-
-  depends_on = [
-    aws_s3_bucket_public_access_block.bedrock_large_data,
-    aws_s3_bucket_ownership_controls.bedrock_large_data,
-  ]
-
-  policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [
-      {
-        Sid    = "AmazonBedrockLogsWrite",
-        Effect = "Allow",
-        Principal = {
-          Service = "bedrock.amazonaws.com"
-        },
-        Action   = ["s3:PutObject"],
-        Resource = "${aws_s3_bucket.bedrock_large_data.arn}/bedrock/AWSLogs/${data.aws_caller_identity.current.account_id}/BedrockModelInvocationLogs/*",
-        Condition = {
-          StringEquals = {
-            "aws:SourceAccount" = data.aws_caller_identity.current.account_id
-          },
-          ArnLike = {
-            "aws:SourceArn" = "arn:aws:bedrock:${var.bedrock_region}:${data.aws_caller_identity.current.account_id}:*"
-          }
-        }
-      }
-    ]
-  })
-}
-
+# retention_in_days: só define se > 0; 0 = nunca expirar (AWS não aceita 0)
 resource "aws_cloudwatch_log_group" "bedrock_invocation_logs" {
   provider = aws.bedrock
 
   name             = "/aws/bedrock/model-invocation-logs"
-  retention_in_days = var.bedrock_logs_retention_days
+  retention_in_days = var.bedrock_logs_retention_days > 0 ? var.bedrock_logs_retention_days : null
 }
 
 resource "aws_iam_role" "bedrock_logging" {
@@ -585,9 +524,9 @@ resource "aws_bedrock_model_invocation_logging_configuration" "main" {
       log_group_name = aws_cloudwatch_log_group.bedrock_invocation_logs.name
       role_arn       = aws_iam_role.bedrock_logging.arn
 
-      # Dados >100KB (transcrições longas) vão para S3; sem isso, nada é logado
+      # Dados >100KB (transcrições longas) vão para o bucket principal (BUCKET_NAME), prefixo bedrock/
       large_data_delivery_s3_config {
-        bucket_name = aws_s3_bucket.bedrock_large_data.id
+        bucket_name = data.aws_s3_bucket.main.id
         key_prefix  = "bedrock"
       }
     }
@@ -623,6 +562,21 @@ resource "aws_s3_bucket_policy" "main_cloudfront" {
         Condition = {
           StringEquals = {
             "AWS:SourceArn" = aws_cloudfront_distribution.app_cdn.arn
+          }
+        }
+      },
+      {
+        Sid    = "AmazonBedrockLogsWrite",
+        Effect = "Allow",
+        Principal = { Service = "bedrock.amazonaws.com" },
+        Action   = ["s3:PutObject"],
+        Resource = "${data.aws_s3_bucket.main.arn}/bedrock/*",
+        Condition = {
+          StringEquals = {
+            "aws:SourceAccount" = data.aws_caller_identity.current.account_id
+          },
+          ArnLike = {
+            "aws:SourceArn" = "arn:aws:bedrock:${var.bedrock_region}:${data.aws_caller_identity.current.account_id}:*"
           }
         }
       }

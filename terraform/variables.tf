@@ -51,13 +51,13 @@ variable "bedrock_inference_profile" {
 }
 
 variable "log_retention_days" {
-  description = "Dias de retenção dos logs das Lambdas no CloudWatch (0 = retenção indefinida)"
+  description = "Dias de retenção dos logs das Lambdas no CloudWatch. 0 = nunca expirar (política omitida; a API AWS não aceita 0). Valores válidos: 1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, etc."
   type        = number
   default     = 30
 }
 
 variable "bedrock_logs_retention_days" {
-  description = "Dias de retenção dos logs do Bedrock no CloudWatch (0 = retenção indefinida)"
+  description = "Dias de retenção dos logs do Bedrock no CloudWatch. 0 = nunca expirar (política omitida)."
   type        = number
   default     = 30
 }

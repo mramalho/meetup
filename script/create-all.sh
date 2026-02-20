@@ -40,6 +40,7 @@ BUCKET_NAME="${BUCKET_NAME:-your-bucket-name}"
 BEDROCK_REGION="${BEDROCK_REGION:-us-east-2}"
 BEDROCK_MODEL_ID="${BEDROCK_MODEL_ID:-anthropic.claude-haiku-4-5-20251001-v1:0}"
 BEDROCK_INFERENCE_PROFILE="${BEDROCK_INFERENCE_PROFILE:-}"
+LOG_RETENTION_DAYS="${LOG_RETENTION_DAYS:-30}"
 BEDROCK_LOGS_RETENTION_DAYS="${BEDROCK_LOGS_RETENTION_DAYS:-30}"
 CORS_EXTRA_ORIGINS="${CORS_EXTRA_ORIGINS:-}"
 OBSERVABILITY_DEBUG="${OBSERVABILITY_DEBUG:-0}"
@@ -126,8 +127,9 @@ bedrock_model_id          = "${BEDROCK_MODEL_ID}"
 bedrock_inference_profile = "${BEDROCK_INFERENCE_PROFILE}"
 bedrock_logs_retention_days = ${BEDROCK_LOGS_RETENTION_DAYS:-30}
 
-observability_debug = "${OBSERVABILITY_DEBUG}"
-observability_trace = "${OBSERVABILITY_TRACE}"
+log_retention_days     = ${LOG_RETENTION_DAYS:-30}
+observability_debug   = "${OBSERVABILITY_DEBUG}"
+observability_trace   = "${OBSERVABILITY_TRACE}"
 EOF
 
 # --- 4. Backend Terraform (bucket S3 para state) ---
