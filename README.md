@@ -6,6 +6,7 @@ Sistema completo para processamento automatizado de vídeos que gera transcriç�
 
 - [Visão Geral](#visão-geral)
 - [Arquitetura](#arquitetura)
+- [Pipeline AWS](#pipeline-aws)
 - [Fluxo de Dados](#fluxo-de-dados)
 - [Componentes](#componentes)
 - [Requisitos](#requisitos)
@@ -66,6 +67,10 @@ graph TB
     WebApp -->|14. Lista arquivos| S3Resumo
     WebApp -->|15. Visualiza/Download| User
 ```
+
+### Pipeline AWS
+
+Para uma visão detalhada do pipeline com a ordem de execução dos serviços AWS, consulte [docs/PIPELINE_AWS.md](docs/PIPELINE_AWS.md).
 
 ## 🔄 Fluxo de Dados
 
@@ -269,6 +274,9 @@ meetup/
 ├── prompt/                      # Prompts e guardrails para resumos
 │   ├── prompt.md                # Exemplo de prompt personalizado
 │   └── guardrails.md            # Regras obrigatórias (empacotado na Lambda)
+│
+├── docs/                        # Documentação
+│   └── PIPELINE_AWS.md          # Pipeline de serviços AWS (ordem de execução)
 │
 ├── .gitignore
 ├── README.md
